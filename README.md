@@ -79,7 +79,7 @@ npm run tauri:dev      # 编译 Rust + 启动应用窗口（前端热更新）
 
 **macOS** - 下载 `.dmg`，把应用拖到「应用程序」。首次打开会被 Gatekeeper 拦截，任选一种解除（推荐第 1 种）：
 
-1. **双击修复脚本（最省事）** - 从同一 Release 页下载 `macos-unblock.command`，把应用拖到「应用程序」后双击它，自动清除隔离属性并打开应用。若双击无反应，终端执行 `chmod +x ~/Downloads/macos-unblock.command` 后再双击。
+1. **双击修复脚本（最省事）** - 打开 `.dmg` 后，里面除应用外还附带一个 `macos-unblock.command`。先把应用拖到「应用程序」，再双击 DMG 里的这个脚本，自动清除隔离属性并打开应用。（脚本随 DMG 一并提供，无需单独下载。）
 2. **终端一行命令**：
    ```bash
    xattr -dr com.apple.quarantine "/Applications/Ydisks批量转存助手.app"
@@ -231,7 +231,7 @@ npm run tauri:build                       # 当前平台默认安装包
 
 **矩阵** - macOS Apple Silicon（`aarch64`）、macOS Intel（`x86_64`）、Windows（`x86_64`）三份并行。
 
-> 当前为**未签名**构建。macOS 首次打开的解除方式见上文「使用指南 -> 下载安装」（含随 Release 一并发布的双击修复脚本 `macos-unblock.command`）；Windows 点「更多信息 -> 仍要运行」即可。如需彻底消除提示，需购买 Apple 开发者计划（macOS 公证，$99/年）或代码签名证书（Windows SmartScreen 信誉）并配置相应 secrets。
+> 当前为**未签名**构建。macOS 构建时通过 `hdiutil` 把双击修复脚本 `macos-unblock.command` 注入到 DMG 根目录（Tauri 无内置配置支持注入 DMG 额外文件，见 `scripts/inject_dmg_extra.sh`）；Windows 点「更多信息 -> 仍要运行」即可。如需彻底消除提示，需购买 Apple 开发者计划（macOS 公证，$99/年）或代码签名证书（Windows SmartScreen 信誉）并配置相应 secrets。
 
 ### 版本管理
 

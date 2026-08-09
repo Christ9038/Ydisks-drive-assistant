@@ -81,6 +81,12 @@ jobs:
         with:
           args: ${{ matrix.args }}
 
+      # macOS：把双击修复脚本注入到每个 DMG 根目录（Tauri 无内置配置支持，
+      # 用 hdiutil 转读写->注入->转回压缩只读）。仅 macOS 矩阵运行。
+      - name: Inject unblock script into DMG (macOS only)
+        if: matrix.rustTarget != ''
+        run: bash scripts/inject_dmg_extra.sh src-tauri/target/${{ matrix.rustTarget }}/release/bundle/dmg scripts/macos-unblock.command
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -132,17 +138,16 @@ jobs:
             echo "Release $TAG already exists; nothing to release."
             exit 0
           fi
-          # 只发布各平台安装包（.dmg / .msi / .exe）+ macOS 首次打开修复脚本；.app 已包含在 .dmg 内。
+          # 只发布各平台安装包（.dmg / .msi / .exe）；.app 已包含在 .dmg 内，
+          # macOS 的双击修复脚本 .command 已注入到 DMG 根目录，无需单独上传。
           FILES=$(find artifacts -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \) | sort)
           if [ -z "$FILES" ]; then
             echo "No installer artifacts found; aborting release."
             exit 1
           fi
-          chmod +x scripts/macos-unblock.command
           echo "Creating $TAG with:"
           echo "$FILES"
-          echo "scripts/macos-unblock.command"
-          gh release create "$TAG" $FILES scripts/macos-unblock.command \
+          gh release create "$TAG" $FILES \
             -R "$REPO" \
             --target "${{ github.sha }}" \
             --title "$TAG" \
