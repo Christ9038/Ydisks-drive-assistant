@@ -138,6 +138,13 @@ describe('parseCsvResources', () => {
     const items = parseCsvResources('标题,网盘链接\n课程A,https://pan.quark.cn/s/a\n纯文本无链接');
     expect(items).toHaveLength(1);
   });
+
+  it('空标题回落到「未命名资源」', () => {
+    const items = parseCsvResources('标题,网盘链接,提取码\n,https://pan.baidu.com/s/1b,1234');
+    expect(items).toHaveLength(1);
+    expect(items[0].title).toBe('未命名资源');
+    expect(items[0].sourceUrl).toBe('https://pan.baidu.com/s/1b?pwd=1234');
+  });
 });
 
 describe('withUrlParam', () => {

@@ -304,6 +304,9 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
       }
 
       const requestKey = `${batch.id}:${item.id}`;
+      // 防御性去重：本 effect 在发起请求前已同步将项翻转为 creating_shortlink（见下文 updateQueueItem），
+      // 故同一项不会被 findItemToShortlink 二次命中，此分支当前不可达。保留以防未来将翻转改为异步
+      // （参照转存 effect 的异步翻转）时对同一项重复发起 createBackendLinks（会造成重复扣费/建链）。
       if (backendRequestsRef.current.has(requestKey)) {
         return;
       }

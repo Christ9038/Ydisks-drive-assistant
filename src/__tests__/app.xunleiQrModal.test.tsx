@@ -6,7 +6,7 @@
 //! 形成循环。此处用 mock 直接置位 xunleiQrAccount，验证 JSX 渲染不崩溃。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 
 const bridge = vi.hoisted(() => ({
   isTauriRuntime: vi.fn(() => true),
@@ -42,38 +42,51 @@ vi.mock('../lib/bridge', () => bridge);
 
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
 
-// mock useXunleiLogin：直接置位 xunleiQrAccount，其余返回安全默认值。
+// mock useXunleiLogin：默认置位 xunleiQrAccount，触发 App.tsx 659-667 的 XunleiQrModal；
+// 测试可调用 hook.mockReturnValue 切换为密码登录配置，覆盖 669-685 的 XunleiPasswordModal。
 const xunleiStub = vi.hoisted(() => {
   const fn = () => {};
+  // 稳定的 mock 引用，便于断言调用情况（clearAllMocks 仅清调用记录，引用不变）。
+  const openXunleiAuthorization = vi.fn();
+  const submitXunleiPasswordLogin = vi.fn();
+  const openXunleiReviewUrl = vi.fn();
+  const build = (overrides: Record<string, unknown> = {}) => ({
+    xunleiQrAccount: undefined,
+    xunleiQr: null,
+    xunleiQrError: '',
+    xunleiQrLoading: false,
+    openXunleiAuthorization,
+    openXunleiPasswordLogin: fn,
+    resetXunleiQrModal: fn,
+    setXunleiQrError: fn,
+    xunleiLoginAccount: undefined,
+    xunleiPassword: '',
+    xunleiUsername: '',
+    xunleiCreditKey: '',
+    xunleiLoginError: '',
+    xunleiLoginSaving: false,
+    xunleiReviewUrl: '',
+    xunleiRawReviewUrl: '',
+    setXunleiUsername: fn,
+    setXunleiPassword: fn,
+    setXunleiCreditKey: fn,
+    submitXunleiPasswordLogin,
+    closeXunleiPasswordLogin: fn,
+    clearXunleiLoginError: fn,
+    openXunleiReviewUrl,
+    ...overrides,
+  });
+  const qrAccount = {
+    id: 'x1', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷主号',
+    status: 'manual_required', loginName: '', purpose: '转存', lastChecked: '', cookie: undefined,
+  };
   return {
-    hook: () => ({
-      xunleiQrAccount: {
-        id: 'x1', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷主号',
-        status: 'manual_required', loginName: '', purpose: '转存', lastChecked: '', cookie: undefined,
-      },
-      xunleiQr: null,
-      xunleiQrError: '',
-      xunleiQrLoading: false,
-      openXunleiAuthorization: fn,
-      openXunleiPasswordLogin: fn,
-      resetXunleiQrModal: fn,
-      setXunleiQrError: fn,
-      xunleiLoginAccount: undefined,
-      xunleiPassword: '',
-      xunleiUsername: '',
-      xunleiCreditKey: '',
-      xunleiLoginError: '',
-      xunleiLoginSaving: false,
-      xunleiReviewUrl: '',
-      xunleiRawReviewUrl: '',
-      setXunleiUsername: fn,
-      setXunleiPassword: fn,
-      setXunleiCreditKey: fn,
-      submitXunleiPasswordLogin: fn,
-      closeXunleiPasswordLogin: fn,
-      clearXunleiLoginError: fn,
-      openXunleiReviewUrl: fn,
-    }),
+    hook: vi.fn(() => build({ xunleiQrAccount: qrAccount })),
+    build,
+    qrAccount,
+    openXunleiAuthorization,
+    submitXunleiPasswordLogin,
+    openXunleiReviewUrl,
   };
 });
 vi.mock('../hooks/useXunleiLogin', () => ({ useXunleiLogin: () => xunleiStub.hook() }));
@@ -83,6 +96,7 @@ import App from '../App';
 describe('App - XunleiQrModal 条件渲染（659-667）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    xunleiStub.hook.mockReturnValue(xunleiStub.build({ xunleiQrAccount: xunleiStub.qrAccount }));
     bridge.isTauriRuntime.mockReturnValue(true);
     bridge.listProviderAccountsFromDb.mockResolvedValue([]);
     bridge.loadBatchesFromDb.mockResolvedValue([]);
@@ -94,5 +108,85 @@ describe('App - XunleiQrModal 条件渲染（659-667）', () => {
     render(<App />);
     await waitFor(() => expect(screen.getByRole('dialog', { name: '迅雷扫码授权' })).toBeTruthy());
     expect(screen.getByText('迅雷主号')).toBeTruthy();
+  });
+
+  it('点击「刷新二维码」调用 openXunleiAuthorization（onRefresh L665）', async () => {
+    render(<App />);
+    const dialog = await screen.findByRole('dialog', { name: '迅雷扫码授权' });
+    const refreshBtn = within(dialog).getByRole('button', { name: '刷新二维码' }) as HTMLButtonElement;
+    // 刷新按钮未禁用（loading=false）
+    expect(refreshBtn.disabled).toBe(false);
+    fireEvent.click(refreshBtn);
+    expect(xunleiStub.openXunleiAuthorization).toHaveBeenCalledWith(xunleiStub.qrAccount);
+  });
+
+  it('点击「立即检查」触发 handleProviderCheck（onSubmit L666）', async () => {
+    // 浏览器模式：账号从 localStorage 加载且不被 DB 迁移清空，便于 handleProviderCheck 命中
+    bridge.isTauriRuntime.mockReturnValue(false);
+    // 二维码已生成时「立即检查」按钮启用
+    xunleiStub.hook.mockReturnValue(
+      xunleiStub.build({
+        xunleiQrAccount: xunleiStub.qrAccount,
+        xunleiQr: { qrcodeSvg: '<svg/>', userCode: 'UC1', expiresIn: 120 },
+      }),
+    );
+    // 预置同 id 的迅雷账号，使 handleProviderCheck 能找到并走 captureProviderLogin
+    localStorage.setItem('ydisks.transfer.providerAccounts.v2', JSON.stringify([{
+      id: 'x1', provider: 'xunlei', status: 'manual_required', cookie: undefined,
+      displayName: '迅雷主号', platformName: '迅雷网盘', loginName: '', purpose: '转存', lastChecked: '-',
+    }]));
+    render(<App />);
+    const dialog = await screen.findByRole('dialog', { name: '迅雷扫码授权' });
+    const checkBtn = within(dialog).getByRole('button', { name: '立即检查' }) as HTMLButtonElement;
+    expect(checkBtn.disabled).toBe(false);
+    fireEvent.click(checkBtn);
+    // handleProviderCheck('x1') -> 账号无 cookie 且非待登录 -> captureProviderLogin
+    await waitFor(() => expect(bridge.captureProviderLogin).toHaveBeenCalledWith(expect.objectContaining({ id: 'x1' })));
+  });
+});
+
+describe('App - XunleiPasswordModal 条件渲染（669-685）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    bridge.isTauriRuntime.mockReturnValue(true);
+    bridge.listProviderAccountsFromDb.mockResolvedValue([]);
+    bridge.loadBatchesFromDb.mockResolvedValue([]);
+    bridge.loadHistoryFromDb.mockResolvedValue([]);
+    localStorage.clear();
+  });
+
+  it('点击「打开验证页」调用 openXunleiReviewUrl（onOpenReviewUrl L683）', async () => {
+    xunleiStub.hook.mockReturnValue(
+      xunleiStub.build({
+        xunleiLoginAccount: {
+          id: 'x2', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷密码登录',
+          status: 'manual_required', loginName: '', purpose: '转存', lastChecked: '', cookie: undefined,
+        },
+        xunleiReviewUrl: 'https://review?deviceid=1',
+      }),
+    );
+    render(<App />);
+    const btn = await screen.findByRole('button', { name: '打开验证页' }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    fireEvent.click(btn);
+    expect(xunleiStub.openXunleiReviewUrl).toHaveBeenCalled();
+  });
+
+  it('点击「登录」调用 submitXunleiPasswordLogin（onSubmit L684）', async () => {
+    xunleiStub.hook.mockReturnValue(
+      xunleiStub.build({
+        xunleiLoginAccount: {
+          id: 'x2', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷密码登录',
+          status: 'manual_required', loginName: '', purpose: '转存', lastChecked: '', cookie: undefined,
+        },
+        xunleiUsername: 'user',
+        xunleiPassword: 'pass',
+      }),
+    );
+    render(<App />);
+    const btn = await screen.findByRole('button', { name: '登录' }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    fireEvent.click(btn);
+    expect(xunleiStub.submitXunleiPasswordLogin).toHaveBeenCalled();
   });
 });

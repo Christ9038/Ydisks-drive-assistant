@@ -29,7 +29,7 @@ const bridge = vi.hoisted(() => ({
   deleteBatchFromDb: vi.fn(() => Promise.resolve()),
   saveHistoryToDb: vi.fn(() => Promise.resolve()),
   loadHistoryFromDb: vi.fn(() => Promise.resolve([])),
-  parseImport: vi.fn(() => Promise.resolve({ accepted: [], filtered: 0 })),
+  parseImport: vi.fn(() => Promise.resolve({ accepted: [] as ParsedResource[], filtered: 0 })),
   createBackendLinks: vi.fn(() => Promise.resolve({ originalLinkId: 'L1', shortLinks: [] })),
   loadBackendAssets: vi.fn(() => Promise.resolve({
     quota: { maxLinks: 100, usedLinks: 0, remainingLinks: 100, shortlinkAccessStatus: 'ACTIVE' },
@@ -45,7 +45,7 @@ const eventApi = vi.hoisted(() => ({ listen: vi.fn(() => Promise.resolve(() => {
 vi.mock('@tauri-apps/api/event', () => eventApi);
 
 import App from '../App';
-import type { HistoryRecord } from '../lib/types';
+import type { HistoryRecord, ParsedResource } from '../lib/types';
 
 const historyRecord = (overrides: Partial<HistoryRecord> = {}): HistoryRecord => ({
   id: 'H1',
@@ -89,14 +89,53 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
     expect(screen.getByText('新建批量转存')).toBeTruthy();
   });
 
+  it('任务页「开启去重」勾选切换 dedupeEnabled（onToggleDedupe L508）', () => {
+    renderApp();
+    const checkbox = screen.getByRole('checkbox', { name: '开启去重' }) as HTMLInputElement;
+    // dedupeEnabled 初始为 true
+    expect(checkbox.checked).toBe(true);
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(false);
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+  });
+
+  it('创建批次后切换到状态页（onBatchCreated L252）', async () => {
+    // 浏览器模式从 localStorage 读取账号：预置一个已连接的夸克账号
+    localStorage.setItem('ydisks.transfer.providerAccounts.v2', JSON.stringify([{
+      id: 'q-conn', provider: 'quark', status: 'connected', cookie: 'ck-1',
+      displayName: '夸克A', platformName: '夸克网盘', loginName: 'q@x', purpose: '转存', lastChecked: '刚刚',
+    }]));
+    bridge.parseImport.mockResolvedValue({
+      accepted: [{ title: '资源A', sourceUrl: 'https://pan.quark.cn/s/abc', provider: 'quark' }],
+      filtered: 0,
+    });
+    renderApp();
+    // 逐条添加资源
+    fireEvent.change(screen.getByLabelText('标题'), { target: { value: '资源A' } });
+    fireEvent.change(screen.getByLabelText('网盘链接'), { target: { value: 'https://pan.quark.cn/s/abc' } });
+    fireEvent.click(screen.getByRole('button', { name: '添加到清单' }));
+    // 等待资源加入后提交按钮启用
+    const submit = screen.getByRole('button', { name: '创建任务并执行' }) as HTMLButtonElement;
+    await waitFor(() => expect(submit.disabled).toBe(false));
+    fireEvent.click(submit);
+    // createBatch -> onBatchCreated -> selectPage('status')
+    await waitFor(() => expect(screen.getByText('任务状态')).toBeTruthy());
+  });
+
   it('移动端菜单：打开 / 关闭侧边栏', () => {
     renderApp();
     const shell = document.querySelector('.app-shell');
     expect(shell?.className).not.toContain('is-sidebar-open');
     fireEvent.click(screen.getByRole('button', { name: '打开导航菜单' }));
     expect(document.querySelector('.app-shell')?.className).toContain('is-sidebar-open');
-    // 遮罩与关闭按钮均可关闭（取第一个「关闭导航菜单」）
+    // 遮罩（sidebar-scrim，DOM 顺序第一个）关闭
     fireEvent.click(screen.getAllByRole('button', { name: '关闭导航菜单' })[0]);
+    expect(document.querySelector('.app-shell')?.className).not.toContain('is-sidebar-open');
+    // 重新打开，用关闭按钮（mobile-close-button L570，DOM 顺序第二个）关闭
+    fireEvent.click(screen.getByRole('button', { name: '打开导航菜单' }));
+    expect(document.querySelector('.app-shell')?.className).toContain('is-sidebar-open');
+    fireEvent.click(screen.getAllByRole('button', { name: '关闭导航菜单' })[1]);
     expect(document.querySelector('.app-shell')?.className).not.toContain('is-sidebar-open');
   });
 
@@ -110,6 +149,17 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
     await waitFor(() => expect(bridge.openProviderLogin).toHaveBeenCalledTimes(1));
     // 账号已加入并渲染卡片
     expect(screen.getByText('我的夸克')).toBeTruthy();
+  });
+
+  it('设置页：填写备注后点击「保存」按钮添加账号（L205 onClick）', async () => {
+    renderApp();
+    fireEvent.click(screen.getByRole('button', { name: /^设置$/ }));
+    fireEvent.click(screen.getAllByRole('button', { name: '添加账号' })[0]);
+    fireEvent.change(screen.getByLabelText('账号备注'), { target: { value: '按钮添加' } });
+    // 点击「保存」按钮（而非回车）触发 submitAddForm
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(bridge.openProviderLogin).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('按钮添加')).toBeTruthy();
   });
 
   it('设置页：添加迅雷账号打开密码登录弹窗', async () => {

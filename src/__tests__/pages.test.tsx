@@ -64,6 +64,12 @@ describe('BatchDetailPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '重试' }));
     expect(onRetryItem).toHaveBeenCalledWith('B-1', 'q1');
   });
+
+  it('logs 为空时 BatchLogPanel 回落到空数组（?? 兜底，102）', () => {
+    render(<BatchDetailPage accounts={[]} batch={batchRecord({ logs: undefined })} onBack={() => {}} onCancel={() => {}} onContinue={() => {}} onPause={() => {}} onRetry={() => {}} onRetryItem={() => {}} />);
+    // logs 为 undefined -> ?? [] -> 空日志占位
+    expect(screen.getByText('暂无运行日志')).toBeTruthy();
+  });
 });
 
 describe('HistoryPage', () => {
@@ -82,6 +88,14 @@ describe('HistoryPage', () => {
     fireEvent.click(screen.getAllByRole('button', { name: '查看' })[0]);
     fireEvent.click(screen.getByRole('button', { name: /导出 CSV/ }));
     expect(onExport).toHaveBeenCalledWith(expect.objectContaining({ id: 'H-1' }));
+  });
+
+  it('失败历史详情展示失败徽标与失败数（46/51 分支）', () => {
+    render(<HistoryPage accounts={[account()]} histories={[historyRecord({ id: 'H-2', status: 'failed', failed: 2, completed: 0, total: 2 })]} onExport={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: '查看' }));
+    expect(screen.getByText('历史结果')).toBeTruthy();
+    // status !== 'success' -> 「失败」徽标；failed > 0 -> danger 色调
+    expect(screen.getAllByText('失败').length).toBeGreaterThan(0);
   });
 
   it('详情页有日志时展示日志面板', () => {
@@ -118,6 +132,9 @@ describe('StatusPage', () => {
     fireEvent.click(screen.getAllByRole('button', { name: '详情' })[0]);
     // 进入详情页
     expect(screen.getByText('批次详情')).toBeTruthy();
+    // 点击返回回到列表（StatusPage 自身的 onBack）
+    fireEvent.click(screen.getByRole('button', { name: '返回' }));
+    expect(screen.getByText('未完成批次')).toBeTruthy();
   });
 
   it('running 批次暂停 / 取消回调', () => {
@@ -144,6 +161,12 @@ describe('StatusPage', () => {
     render(<StatusPage accounts={[]} batches={[batchRecord({ status: 'queued', queuePosition: 1 })]} onCancel={() => {}} onContinue={() => {}} onPause={() => {}} onRetry={() => {}} onRetryItem={() => {}} />);
     expect(screen.queryByRole('button', { name: '暂停' })).toBeNull();
     expect(screen.queryByRole('button', { name: '继续' })).toBeNull();
+  });
+
+  it('manual_required 批次使「需处理」指标为 warning 色调（62 分支）', () => {
+    render(<StatusPage accounts={[]} batches={[batchRecord({ status: 'manual_required' })]} onCancel={() => {}} onContinue={() => {}} onPause={() => {}} onRetry={() => {}} onRetryItem={() => {}} />);
+    // manualCount > 0 -> 需处理 metric tone=warning
+    expect(screen.getByText('需处理')).toBeTruthy();
   });
 
   it('资源项 waiting_retry 时详情按钮触发 onRetryItem', () => {

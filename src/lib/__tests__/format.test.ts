@@ -26,6 +26,10 @@ describe('formatBackendError', () => {
   it('Error 实例回落到 message', () => {
     expect(formatBackendError(new Error('boom'))).toBe('boom');
   });
+  it('Error 实例但 message 为空时回落到空串（instanceof 分支）', () => {
+    // message 为空串 -> getBackendErrorPayload 返回 null -> 走 instanceof Error 分支
+    expect(formatBackendError(new Error(''))).toBe('');
+  });
   it('其他类型回落到 String', () => {
     expect(formatBackendError(42)).toBe('42');
   });

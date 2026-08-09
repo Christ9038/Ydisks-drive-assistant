@@ -208,23 +208,22 @@ export function TasksPage({
   };
 
   const submitBatch = () => {
-    if (!canSubmit || !selectedProviderAccount) {
-      return;
+    if (canSubmit && selectedProviderAccount) {
+      onCreateBatch({
+        provider,
+        providerAccountId,
+        providerAccountName: selectedProviderAccount.displayName,
+        ydisksAccountId: selectedYdisksAccount?.id ?? '',
+        ydisksAccountName: selectedYdisksAccount?.name ?? '',
+        targetFolderRef,
+        shortLinkTargets: selectedTargets,
+        resources,
+        executable,
+        waitingQuota: waiting,
+      });
+      setResources([]);
+      setFilterCount(0);
     }
-    onCreateBatch({
-      provider,
-      providerAccountId,
-      providerAccountName: selectedProviderAccount.displayName,
-      ydisksAccountId: selectedYdisksAccount?.id ?? '',
-      ydisksAccountName: selectedYdisksAccount?.name ?? '',
-      targetFolderRef,
-      shortLinkTargets: selectedTargets,
-      resources,
-      executable,
-      waitingQuota: waiting,
-    });
-    setResources([]);
-    setFilterCount(0);
   };
 
   return (

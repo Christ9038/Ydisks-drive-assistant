@@ -461,4 +461,38 @@ describe('useXunleiLogin - 二次验证完成监听', () => {
     await waitFor(() => expect(bridge.loginXunleiPassword).toHaveBeenCalledWith(expect.objectContaining({ id: 'x1' }), 'u', 'p', 'ck-new'));
     expect(result.current.xunleiLoginAccountId).toBeNull();
   });
+
+  it('事件续登时账号已被删除 -> runPasswordLogin 提前返回（account guard L151-152）', async () => {
+    const dispose = vi.fn();
+    eventApi.listen.mockResolvedValue(dispose);
+    const { result, rerender } = renderLogin([xunleiAccount()]);
+    // 进入二次验证流程：先失败登录拿到 reviewUrl，置 xunleiLoginAccountId='x1'
+    act(() => result.current.openXunleiPasswordLogin(xunleiAccount()));
+    bridge.loginXunleiPassword.mockRejectedValueOnce({
+      stage: 'xunlei_review',
+      message: 'v',
+      details: { reviewUrl: 'https://rev', creditKey: '' },
+    });
+    act(() => result.current.setXunleiUsername('u'));
+    act(() => result.current.setXunleiPassword('p'));
+    await act(async () => {
+      await result.current.submitXunleiPasswordLogin();
+    });
+    expect(result.current.xunleiReviewUrl).toBe('https://rev');
+    // 账号在二次验证期间被删除。review 监听 effect 不依赖 providerAccounts（见 L337 注释），
+    // 故需改一次其依赖（xunleiPassword）以重建监听闭包，捕获已被清空的 providerAccounts。
+    rerender({ accs: [], upd: vi.fn(), toast: () => {} });
+    act(() => result.current.setXunleiPassword('p2'));
+    // 之前 submitXunleiPasswordLogin 已调用过一次 loginXunleiPassword（review 失败），清掉以隔离续登调用
+    bridge.loginXunleiPassword.mockClear();
+    bridge.loginXunleiPassword.mockResolvedValue({ cookie: 'ck2', loginName: '雷2', cookieCount: 1 });
+    const handler = eventApi.listen.mock.calls[eventApi.listen.mock.calls.length - 1][1];
+    await act(async () => {
+      await handler({ payload: { windowLabel: 'l', creditKey: 'ck-new' } });
+    });
+    // 闭包内 providerAccounts 已空 -> runPasswordLogin 找不到账号 -> 提前返回，不发起登录
+    expect(bridge.loginXunleiPassword).not.toHaveBeenCalled();
+    expect(result.current.xunleiLoginAccountId).toBe('x1');
+    expect(result.current.xunleiLoginError).toBe('验证完成，正在自动继续登录……');
+  });
 });

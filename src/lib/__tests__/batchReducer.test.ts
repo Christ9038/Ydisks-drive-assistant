@@ -147,6 +147,16 @@ describe('reduceRetryBatch / reduceRetryQueueItem', () => {
     expect(next.items[0].shareUrl).toBe('https://pan.quark.cn/s/mine');
   });
 
+  it('reduceRetryQueueItem 仅重置目标项，其余项保持不变（map false 分支）', () => {
+    const b = baseBatch(
+      [item('waiting_retry', { id: 'I-1' }), item('done', { id: 'I-2' })],
+      { total: 2, retrying: 1 },
+    );
+    const next = reduceRetryQueueItem(b, 'I-1');
+    expect(next.items[0].status).toBe('pending');
+    expect(next.items[1].status).toBe('done');
+  });
+
   it('reduceRetryBatch 对已转存项跳过转存，未转存项回到 pending', () => {
     const b = baseBatch([
       item('waiting_retry', { id: 'I-1', shareUrl: 'https://pan.quark.cn/s/mine' }),
@@ -233,6 +243,15 @@ describe('batchToHistory', () => {
     const b = baseBatch([item('transferring')], { total: 5, completed: 5 });
     const h = batchToHistory(b, 'failed');
     expect(h.failed).toBe(1);
+  });
+
+  it('logs 为空时回落到空数组（?? 兜底）', () => {
+    // 运行时 logs 可能缺失（类型标注为必填，此处用 cast 模拟违例数据）
+    const b = { ...baseBatch([item('done')], { total: 1, completed: 1 }), logs: undefined } as unknown as BatchRecord;
+    const h = batchToHistory(b, 'success');
+    // 仅含本次结束日志
+    expect(h.logs).toHaveLength(1);
+    expect(h.logs?.[0].tone).toBe('success');
   });
 });
 

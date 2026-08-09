@@ -554,4 +554,10 @@ describe('downloadHistoryCsv', () => {
     expect(clickSpy).toHaveBeenCalled();
     createEl.mockRestore();
   });
+  it('createdAt 无数字时文件名回落到 history', async () => {
+    setRuntime(true);
+    vi.mocked(invoke).mockResolvedValueOnce('/path/to/file.csv');
+    await downloadHistoryCsv({ ...historyRecord, createdAt: '' });
+    expect(invoke).toHaveBeenCalledWith('save_text_file_command', expect.objectContaining({ fileName: 'Ydisks-转存结果-history.csv' }));
+  });
 });

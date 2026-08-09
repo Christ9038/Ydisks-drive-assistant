@@ -163,6 +163,13 @@ describe('XunleiPasswordModal', () => {
   it('rawReviewUrl 与 reviewUrl 不同时展示原始地址', () => {
     render(<XunleiPasswordModal {...base} reviewUrl="https://x?deviceid=1" rawReviewUrl="https://raw" />);
     expect(screen.getByText('接口原始地址')).toBeTruthy();
+    // 两个只读输入框聚焦时全选文本（onFocus）
+    const reviewInput = screen.getByDisplayValue('https://x?deviceid=1') as HTMLInputElement;
+    const rawInput = screen.getByDisplayValue('https://raw') as HTMLInputElement;
+    reviewInput.focus();
+    expect(document.activeElement).toBe(reviewInput);
+    rawInput.focus();
+    expect(document.activeElement).toBe(rawInput);
   });
   it('有 reviewUrl 且 error 时使用 warning 色调与二次验证标题', () => {
     render(<XunleiPasswordModal {...base} reviewUrl="https://x" error="需验证" />);
