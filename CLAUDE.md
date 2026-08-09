@@ -161,3 +161,6 @@ All UI state is local React state in `App.tsx`. No external state library. Data 
 | Cargo manifest | `src-tauri/Cargo.toml` |
 | Vite config | `vite.config.ts` |
 | Icons | `src-tauri/icons/` |
+| CI workflow | `.github/workflows/build.yml` |
+| CI/release scripts | `scripts/`（`version.mjs` 版本推导、`inject_dmg_extra.sh` DMG 注入、`macos-unblock.command` 免证书修复） |
+| CI 运维文档 | `docs/CI.md`（面向维护者：发版操作、版本规则、故障排查） |
