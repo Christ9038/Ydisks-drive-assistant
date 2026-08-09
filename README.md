@@ -75,13 +75,18 @@ npm run tauri:dev      # 编译 Rust + 启动应用窗口（前端热更新）
 
 ### 1. 下载安装
 
-从 GitHub Releases 下载对应平台的安装包：
+从 GitHub Releases 下载对应平台的安装包。本项目**未购买代码签名证书**（不向 Apple / Microsoft 付费），浏览器直下的包会被系统安全机制拦截，按下面任一方式即可正常安装，**无需自签名**：
 
-- **macOS** — `.dmg`（拖拽安装）。注意：未签名版本首次打开会被 Gatekeeper 拦截，**右键 → 打开**，或终端执行：
-  ```bash
-  xattr -dr com.apple.quarantine "/Applications/Ydisks批量转存助手.app"
-  ```
-- **Windows** — `.msi`（安装版）或 `.exe`（NSIS 安装包）。未签名版本运行时 SmartScreen 会提示「未知发布者」，点「更多信息 → 仍要运行」。
+**macOS** - 下载 `.dmg`，把应用拖到「应用程序」。首次打开会被 Gatekeeper 拦截，任选一种解除（推荐第 1 种）：
+
+1. **双击修复脚本（最省事）** - 从同一 Release 页下载 `macos-unblock.command`，把应用拖到「应用程序」后双击它，自动清除隔离属性并打开应用。若双击无反应，终端执行 `chmod +x ~/Downloads/macos-unblock.command` 后再双击。
+2. **终端一行命令**：
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/Ydisks批量转存助手.app"
+   ```
+3. **系统设置** - 先双击应用触发拦截提示，再进「系统设置 -> 隐私与安全性 -> 仍要打开」。（macOS 15 Sequoia 起，右键 -> 打开 已不再可靠，请用上述方式。）
+
+**Windows** - 运行 `.msi`（安装版）或 `.exe`（NSIS 安装包）。SmartScreen 提示「Windows 保护了你的电脑」时，点「**更多信息 -> 仍要运行**」（一次性，2 次点击）。这是未签名包的正常现象，不影响使用。
 
 > 自行构建安装包见 [构建发布](#-构建发布)。
 
@@ -226,7 +231,7 @@ npm run tauri:build                       # 当前平台默认安装包
 
 **矩阵** - macOS Apple Silicon（`aarch64`）、macOS Intel（`x86_64`）、Windows（`x86_64`）三份并行。
 
-> 当前为**未签名**构建。macOS 用户首次打开需右键->打开或 `xattr -dr com.apple.quarantine`；Windows 会有 SmartScreen 提示。如需签名（macOS Apple 公证 / Windows 代码签名），配置相应 secrets 并修改 workflow 即可。
+> 当前为**未签名**构建。macOS 首次打开的解除方式见上文「使用指南 -> 下载安装」（含随 Release 一并发布的双击修复脚本 `macos-unblock.command`）；Windows 点「更多信息 -> 仍要运行」即可。如需彻底消除提示，需购买 Apple 开发者计划（macOS 公证，$99/年）或代码签名证书（Windows SmartScreen 信誉）并配置相应 secrets。
 
 ### 版本管理
 

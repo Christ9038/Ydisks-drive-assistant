@@ -132,15 +132,17 @@ jobs:
             echo "Release $TAG already exists; nothing to release."
             exit 0
           fi
-          # 只发布各平台安装包（.dmg / .msi / .exe）；.app 已包含在 .dmg 内，不单独上传。
+          # 只发布各平台安装包（.dmg / .msi / .exe）+ macOS 首次打开修复脚本；.app 已包含在 .dmg 内。
           FILES=$(find artifacts -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \) | sort)
           if [ -z "$FILES" ]; then
             echo "No installer artifacts found; aborting release."
             exit 1
           fi
+          chmod +x scripts/macos-unblock.command
           echo "Creating $TAG with:"
           echo "$FILES"
-          gh release create "$TAG" $FILES \
+          echo "scripts/macos-unblock.command"
+          gh release create "$TAG" $FILES scripts/macos-unblock.command \
             -R "$REPO" \
             --target "${{ github.sha }}" \
             --title "$TAG" \
