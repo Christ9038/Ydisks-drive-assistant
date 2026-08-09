@@ -1,0 +1,77 @@
+name: build
+
+# 每次推送到 main 自动构建；也可在 Actions 页面手动触发。
+# 产物作为 artifact 上传（不签名、不发 Release）。
+# 如需发 Release，可改用 tag 触发并给 tauri-action 传 tagName。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一分支新推送时取消仍在跑的旧构建，省额度。
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon (M1/M2/M3+)
+          - platform: macos-latest
+            name: macos-aarch64
+            args: '--target aarch64-apple-darwin'
+            rustTarget: aarch64-apple-darwin
+          # Intel Mac
+          - platform: macos-latest
+            name: macos-x86_64
+            args: '--target x86_64-apple-darwin'
+            rustTarget: x86_64-apple-darwin
+          # Windows x64
+          - platform: windows-latest
+            name: windows-x86_64
+            args: ''
+            rustTarget: ''
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rustTarget }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # 不传 tagName：只构建，不创建 GitHub Release。
+      # tauri.conf.json 的 beforeBuildCommand 会自动先跑 `npm run build`。
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v1
+        with:
+          args: ${{ matrix.args }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ydisks-transfer-assistant-${{ matrix.name }}
+          path: |
+            src-tauri/target/*/release/bundle/macos/*.app
+            src-tauri/target/*/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error

@@ -1,0 +1,68 @@
+//! Ydisks批量转存助手 —— Tauri 后端入口。
+//!
+//! 本文件仅负责模块声明、插件/状态装配与命令注册。所有业务逻辑分布在
+//! `config` / `error` / `types` / `http` / `db` / `backend` / `import` /
+//! `providers` / `auth` / `commands` / `logging` 等模块中。
+
+pub mod auth;
+pub mod backend;
+pub mod commands;
+pub mod config;
+pub mod db;
+pub mod error;
+pub mod http;
+pub mod import;
+pub mod logging;
+pub mod providers;
+pub mod types;
+
+use commands::*;
+
+/// 启动 Tauri 应用。
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(logging::build_log_plugin())
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            db::init_db(app.handle())?;
+            tracing::info!("Ydisks批量转存助手启动");
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            preview_quota,
+            parse_import_text_command,
+            parse_import_csv_command,
+            build_original_link_payload_command,
+            build_short_link_payloads_command,
+            fetch_backend_assets_command,
+            fetch_backend_quota_command,
+            open_quark_login_window_command,
+            capture_quark_login_cookie_command,
+            check_quark_cookie_command,
+            open_provider_login_window_command,
+            open_xunlei_review_window_command,
+            close_xunlei_review_window_command,
+            start_xunlei_login_command,
+            check_xunlei_login_command,
+            login_xunlei_password_command,
+            capture_provider_login_command,
+            check_provider_login_command,
+            list_provider_folders_command,
+            transfer_quark_share_command,
+            transfer_share_command,
+            create_backend_links_command,
+            list_provider_accounts_command,
+            upsert_provider_account_command,
+            delete_provider_account_command,
+            import_legacy_accounts_command,
+            save_batch_command,
+            load_batches_command,
+            delete_batch_command,
+            save_history_command,
+            load_history_command,
+            save_text_file_command,
+            open_log_dir_command,
+        ])
+        .run(tauri::generate_context!())
+        .expect("启动 Ydisks批量转存助手失败");
+}
