@@ -35,11 +35,11 @@ import {
 } from '../lib/engine';
 import {
   batchToHistory,
+  deriveTransferSuccessUpdate,
   findItemToShortlink,
   findItemToTransfer,
   hasSamePlatformBlocker,
   isBatchComplete,
-  needsBackendRegistration,
   reduceContinueBatch,
   reducePauseBatch,
   reduceQueueItemUpdate,
@@ -136,9 +136,8 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
     if (!isTauriRuntime()) {
       return undefined;
     }
-    if (batchSaveTimerRef.current !== null) {
-      window.clearTimeout(batchSaveTimerRef.current);
-    }
+    // 清理函数（return）会在每次 batches 变更前先 clear 上一轮定时器并置空 ref，
+    // 因此这里无需再判空清理——直接设置新的去抖定时器即可。
     batchSaveTimerRef.current = window.setTimeout(() => {
       batchSaveTimerRef.current = null;
       const currentIds = new Set(batches.map((batch) => batch.id));
@@ -254,26 +253,8 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
           appendBatchLog(batch.id, createBatchLog('success', `转存完成：${result.shareUrl}`, item.title));
           // 仅转存模式（无 API Key 或未绑定后台账号）：跳过后台登记，直接完成。
           // 有后台登记需求时才推进到 creating_original，由短链 effect 接管。
-          const skipBackend = !needsBackendRegistration(batch, apiKey);
-          if (skipBackend) {
-            updateQueueItem(batch.id, item.id, (currentItem) => ({
-              ...currentItem,
-              error: undefined,
-              progress: 100,
-              shareUrl: result.shareUrl,
-              status: 'done',
-              step: '转存完成',
-            }));
-            return;
-          }
-          updateQueueItem(batch.id, item.id, (currentItem) => ({
-            ...currentItem,
-            error: undefined,
-            progress: 65,
-            shareUrl: result.shareUrl,
-            status: 'creating_original',
-            step: '当前处理：登记后台原始链接',
-          }));
+          const next = deriveTransferSuccessUpdate(batch, apiKey, result.shareUrl);
+          updateQueueItem(batch.id, item.id, (currentItem) => ({ ...currentItem, ...next }));
         })
         .catch((error) => {
           const message = formatBackendError(error);

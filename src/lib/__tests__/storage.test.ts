@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   loadStoredProviderAccounts,
   saveStoredProviderAccounts,
@@ -77,5 +77,56 @@ describe('网盘账号持久化', () => {
 
   it('无数据时返回空数组', () => {
     expect(loadStoredProviderAccounts()).toEqual([]);
+  });
+});
+
+describe('resolveThemeMode system + dark matchMedia', () => {
+  it('system 且 prefers-color-scheme: dark -> dark', () => {
+    const spy = vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
+    expect(resolveThemeMode('system')).toBe('dark');
+    spy.mockRestore();
+  });
+});
+
+describe('SSR / 异常降级', () => {
+  it('无 window 时安全降级', () => {
+    vi.stubGlobal('window', undefined);
+    try {
+      expect(loadStoredProviderAccounts()).toEqual([]);
+      expect(loadStoredThemeMode()).toBe('system');
+      expect(loadStoredApiKey()).toBe('');
+      expect(resolveThemeMode('system')).toBe('light');
+      saveStoredProviderAccounts([account]);
+      saveStoredApiKey('x');
+      clearStoredApiKey();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('localStorage 读取抛错时降级返回默认值', () => {
+    const getter = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    try {
+      expect(loadStoredApiKey()).toBe('');
+      expect(loadStoredThemeMode()).toBe('system');
+      expect(loadStoredProviderAccounts()).toEqual([]);
+    } finally {
+      getter.mockRestore();
+    }
+  });
+
+  it('localStorage 写入 / 删除抛错时不抛出', () => {
+    const setter = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+    expect(() => saveStoredApiKey('x')).not.toThrow();
+    setter.mockRestore();
+    const remover = vi.spyOn(window.localStorage, 'removeItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    expect(() => clearStoredApiKey()).not.toThrow();
+    remover.mockRestore();
   });
 });

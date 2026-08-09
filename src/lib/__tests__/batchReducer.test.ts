@@ -11,6 +11,7 @@ import {
   findItemToShortlink,
   isBatchComplete,
   needsBackendRegistration,
+  deriveTransferSuccessUpdate,
 } from '../batchReducer';
 import type { BatchRecord } from '../types';
 import type { QueueItem } from '../../types';
@@ -60,6 +61,12 @@ describe('reduceQueueItemUpdate', () => {
     expect(next.currentStep).toBe('等待重试');
   });
 
+  it('running 且无活跃项且有 waiting_quota -> currentStep 等待短链额度', () => {
+    const b = baseBatch([item('waiting_quota')], { total: 1 });
+    const next = reduceQueueItemUpdate(b, 'I-1', (it) => it);
+    expect(next.currentStep).toBe('等待短链额度');
+  });
+
   it('非 running 批次不改变状态', () => {
     const b = baseBatch([item('manual_required')], { total: 1, status: 'paused' });
     const next = reduceQueueItemUpdate(b, 'I-1', (it) => it);
@@ -99,6 +106,12 @@ describe('reducePauseBatch / reduceContinueBatch', () => {
     const next = reduceContinueBatch(baseBatch([item('pending')], { status: 'paused' }), true);
     expect(next.status).toBe('queued');
     expect(next.logs[0].message).toBe('继续后进入同平台队列');
+  });
+
+  it('reducePauseBatch 在 logs 为 undefined 时仍可追加日志', () => {
+    const b = baseBatch([item('pending')], { status: 'paused', logs: undefined as any });
+    const next = reducePauseBatch(b);
+    expect(next.logs[0].message).toBe('用户暂停批次');
   });
 });
 
@@ -160,6 +173,40 @@ describe('needsBackendRegistration', () => {
   it('批次未绑定后台账号时不需要登记（仅转存）', () => {
     const b = baseBatch([item('done')], { ydisksAccountId: '' });
     expect(needsBackendRegistration(b, 'sk-123')).toBe(false);
+  });
+});
+
+describe('deriveTransferSuccessUpdate', () => {
+  it('无 API Key 时直接置 done（仅转存模式）', () => {
+    const b = baseBatch([item('sharing')], { ydisksAccountId: 'y' });
+    const next = deriveTransferSuccessUpdate(b, '', 'https://pan.quark.cn/s/mine');
+    expect(next.status).toBe('done');
+    expect(next.progress).toBe(100);
+    expect(next.step).toBe('转存完成');
+    expect(next.shareUrl).toBe('https://pan.quark.cn/s/mine');
+    expect(next.error).toBeUndefined();
+  });
+
+  it('有 API Key 且绑定后台账号时推进到 creating_original（回归保护）', () => {
+    const b = baseBatch([item('sharing')], { ydisksAccountId: 'y' });
+    const next = deriveTransferSuccessUpdate(b, 'sk-123', 'https://pan.quark.cn/s/mine');
+    expect(next.status).toBe('creating_original');
+    expect(next.progress).toBe(65);
+    expect(next.step).toBe('当前处理：登记后台原始链接');
+    expect(next.shareUrl).toBe('https://pan.quark.cn/s/mine');
+    expect(next.error).toBeUndefined();
+  });
+
+  it('有 API Key 但未绑定后台账号时仍走仅转存模式', () => {
+    const b = baseBatch([item('sharing')], { ydisksAccountId: '' });
+    const next = deriveTransferSuccessUpdate(b, 'sk-123', 'https://pan.quark.cn/s/mine');
+    expect(next.status).toBe('done');
+  });
+
+  it('API Key 仅含空白时按无 Key 处理（仅转存模式）', () => {
+    const b = baseBatch([item('sharing')], { ydisksAccountId: 'y' });
+    const next = deriveTransferSuccessUpdate(b, '   ', 'https://pan.quark.cn/s/mine');
+    expect(next.status).toBe('done');
   });
 });
 

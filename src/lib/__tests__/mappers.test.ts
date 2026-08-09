@@ -128,6 +128,18 @@ describe('historyToRow / historyFromRow 往返', () => {
     expect(back.items).toHaveLength(1);
     expect(back.status).toBe('success');
   });
+
+  it('items/logs 为 undefined 时序列化为空数组', () => {
+    const row = historyToRow({
+      id: 'B-1', status: 'success', createdAt: 'x',
+      total: 0, completed: 0, failed: 0,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      items: undefined as any,
+      logs: undefined as any,
+    });
+    expect(row.itemsJson).toBe('[]');
+    expect(row.logsJson).toBe('[]');
+  });
 });
 
 describe('buildTargetsFromBackendAssets', () => {
@@ -169,5 +181,45 @@ describe('buildTargetsFromBackendAssets', () => {
       ydisksAccountId: 'y', ydisksAccountName: 'Y', enabled: true,
     }];
     expect(buildTargetsFromBackendAssets({ ...assets, accounts: [] }, fallback)).toEqual(fallback);
+  });
+  it('无 ACTIVE 域名时使用全部域名', () => {
+    const targets = buildTargetsFromBackendAssets({ ...assets, domains: [{ domainName: 'a.com', status: 'INACTIVE' }] }, []);
+    expect(targets).toHaveLength(2);
+    expect(targets[0].domain).toBe('a.com');
+  });
+  it('无任何域名时取 fallback 首个域名', () => {
+    const fallback: ShortLinkTarget[] = [{
+      id: 'ch1', channelId: 'ch1', channelName: 'Q群', domain: 'fb.com',
+      ydisksAccountId: 'y-1', ydisksAccountName: 'Ydisks', enabled: true,
+    }];
+    const targets = buildTargetsFromBackendAssets({ ...assets, domains: [] }, fallback);
+    expect(targets[0].domain).toBe('fb.com');
+  });
+  it('已有目标域名不可用时回落默认域名', () => {
+    const fallback: ShortLinkTarget[] = [{
+      id: 'ch1', channelId: 'ch1', channelName: 'Q群', domain: 'gone.com',
+      ydisksAccountId: 'y-1', ydisksAccountName: 'Ydisks', enabled: true,
+    }];
+    const targets = buildTargetsFromBackendAssets(assets, fallback);
+    expect(targets[0].domain).toBe('ydisks.com');
+  });
+});
+
+describe('batchToRow / buildTargets 分支补充', () => {
+  it('batch items/logs/shortLinkTargets 为 undefined 时序列化为空数组', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = batchToRow({ ...batch(), items: undefined as any, logs: undefined as any, shortLinkTargets: undefined as any });
+    expect(row.itemsJson).toBe('[]');
+    expect(row.logsJson).toBe('[]');
+    expect(row.shortLinkTargetsJson).toBe('[]');
+  });
+  it('无域名且无 fallback 时返回空', () => {
+    const noDomains: RustBackendAssetsSnapshot = {
+      quota: { maxLinks: 100, usedLinks: 0, remainingLinks: 100, shortlinkAccessStatus: 'ACTIVE' },
+      accounts: [{ id: 'y-1', name: 'Ydisks' }],
+      channels: [{ id: 'ch1', name: 'Q群' }],
+      domains: [],
+    };
+    expect(buildTargetsFromBackendAssets(noDomains, [])).toEqual([]);
   });
 });

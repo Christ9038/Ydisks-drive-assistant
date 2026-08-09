@@ -4,7 +4,7 @@
 // 不触碰 React state、不发起网络请求、不产生副作用。日志追加统一截断为最近 80 条。
 // 时间相关字段（updatedAt）由调用方在 App 层填 '刚刚'；这里只负责结构转换。
 
-import type { BatchMonitor, HistoryBatch, QueueItem } from '../types';
+import type { BatchMonitor, HistoryBatch, QueueItem, TaskStatus } from '../types';
 import { isActiveQueueStatus, isBlockingStatus } from './guards';
 import { createBatchLog } from './engine';
 import { providerLabels } from './constants';
@@ -212,4 +212,30 @@ export function isBatchComplete(batch: BatchRecord): boolean {
  */
 export function needsBackendRegistration(batch: BatchRecord, apiKey: string): boolean {
   return Boolean(apiKey.trim()) && Boolean(batch.ydisksAccountId.trim());
+}
+
+/**
+ * 转存成功后队列项的目标状态片段。
+ *
+ * - 仅转存模式（无 API Key 或未绑定后台账号）：直接置 `done`，不登记后台、不发短链；
+ * - 有后台登记需求：推进到 `creating_original`，交由短链 effect 接管。
+ *
+ * 抽成纯函数以便单测；effect 只负责把它合并回对应队列项（保留原 `accountId` /
+ * `sourceUrl` 等字段，仅覆盖错误 / 进度 / 分享链接 / 状态 / 步骤）。
+ */
+export function deriveTransferSuccessUpdate(
+  batch: BatchRecord,
+  apiKey: string,
+  shareUrl: string,
+): { error: undefined; progress: number; shareUrl: string; status: TaskStatus; step: string } {
+  if (!needsBackendRegistration(batch, apiKey)) {
+    return { error: undefined, progress: 100, shareUrl, status: 'done', step: '转存完成' };
+  }
+  return {
+    error: undefined,
+    progress: 65,
+    shareUrl,
+    status: 'creating_original',
+    step: '当前处理：登记后台原始链接',
+  };
 }

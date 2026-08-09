@@ -116,6 +116,16 @@ describe('状态判定', () => {
     expect(isAwaitingProviderLogin(account({ status: 'manual_required', pendingReason: '其它原因' }))).toBe(false);
     expect(isAwaitingProviderLogin(account({ status: 'connected' }))).toBe(false);
   });
+  it('isAwaitingProviderLogin 覆盖其余关键词', () => {
+    expect(isAwaitingProviderLogin(account({ status: 'manual_required', pendingReason: '请完成授权窗口' }))).toBe(true);
+    expect(isAwaitingProviderLogin(account({ status: 'manual_required', pendingReason: '请扫码授权' }))).toBe(true);
+    expect(isAwaitingProviderLogin(account({ status: 'manual_required', pendingReason: '请扫码确认' }))).toBe(true);
+  });
+  it('isXunleiAuthorizationPendingMessage 覆盖等待扫码 / slow_down / authorization pending', () => {
+    expect(isXunleiAuthorizationPendingMessage('等待扫码中')).toBe(true);
+    expect(isXunleiAuthorizationPendingMessage('slow_down')).toBe(true);
+    expect(isXunleiAuthorizationPendingMessage('authorization pending')).toBe(true);
+  });
 });
 
 describe('remainingLinksOf', () => {
@@ -147,5 +157,13 @@ describe('normalizeStoredProviderAccounts', () => {
   it('非数组返回空', () => {
     expect(normalizeStoredProviderAccounts(null)).toEqual([]);
     expect(normalizeStoredProviderAccounts('x')).toEqual([]);
+  });
+  it('pendingReason 为字符串时保留', () => {
+    const result = normalizeStoredProviderAccounts([{ id: 'quark-1', provider: 'quark', pendingReason: '待处理' }]);
+    expect(result[0].pendingReason).toBe('待处理');
+  });
+  it('pendingReason 非字符串时补 undefined', () => {
+    const result = normalizeStoredProviderAccounts([{ id: 'quark-1', provider: 'quark', pendingReason: 123 }]);
+    expect(result[0].pendingReason).toBeUndefined();
   });
 });

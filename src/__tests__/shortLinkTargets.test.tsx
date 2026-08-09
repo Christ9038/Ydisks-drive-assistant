@@ -75,4 +75,19 @@ describe('ShortLinkTargets', () => {
     (screen.getByRole('checkbox') as HTMLInputElement).click();
     expect(onToggle).toHaveBeenCalledWith('T-1');
   });
+
+  it('无可用域名时渠道域名下拉显示占位', () => {
+    const onChangeDomain = vi.fn();
+    render(
+      <ShortLinkTargets
+        domainOptions={[]}
+        targets={[target({ enabled: true })]}
+        onChangeDomain={onChangeDomain}
+        onToggle={() => {}}
+      />,
+    );
+    const select = screen.getByLabelText('小红书短链域名') as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+    expect(screen.getByText('暂无可用域名')).toBeTruthy();
+  });
 });

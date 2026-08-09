@@ -133,6 +133,11 @@ describe('parseCsvResources', () => {
     const items = parseCsvResources('课程A,https://pan.quark.cn/s/a,');
     expect(items).toHaveLength(1);
   });
+
+  it('无链接的数据行被过滤', () => {
+    const items = parseCsvResources('标题,网盘链接\n课程A,https://pan.quark.cn/s/a\n纯文本无链接');
+    expect(items).toHaveLength(1);
+  });
 });
 
 describe('withUrlParam', () => {
@@ -146,5 +151,15 @@ describe('withUrlParam', () => {
   it('空 url 或空 value 原样返回', () => {
     expect(withUrlParam('', 'k', 'v')).toBe('');
     expect(withUrlParam('https://x.cn', 'k', '')).toBe('https://x.cn');
+  });
+});
+
+describe('appendBaiduAccessCode / parseCsvResources 分支补充', () => {
+  it('百度链接已有其它查询参数时用 & 追加 pwd', () => {
+    expect(appendBaiduAccessCode('https://pan.baidu.com/s/1abc?from=share', '提取码: 1234')).toBe('https://pan.baidu.com/s/1abc?from=share&pwd=1234');
+  });
+  it('CSV 访问码列含关键词时识别', () => {
+    const items = parseCsvResources('课程,https://pan.baidu.com/s/1b,提取码:1234');
+    expect(items[0].sourceUrl).toBe('https://pan.baidu.com/s/1b?pwd=1234');
   });
 });
