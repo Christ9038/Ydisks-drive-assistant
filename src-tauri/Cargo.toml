@@ -1,6 +1,6 @@
 [package]
 name = "ydisks-transfer-assistant"
-version = "0.1.0"
+version = "1.0.0"
 description = "Ydisks批量转存助手"
 authors = ["Ydisks"]
 edition = "2021"

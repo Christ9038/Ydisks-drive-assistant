@@ -217,15 +217,39 @@ npm run tauri:build -- --bundles app     # macOS：生成 .app
 npm run tauri:build                       # 当前平台默认安装包
 ```
 
-### CI 自动构建（GitHub Actions）
+### CI 自动构建与发版（GitHub Actions）
 
-仓库内置 `.github/workflows/build.yml`：
+仓库内置 `.github/workflows/build.yml`，两种模式：
 
-- **触发** — push 到 `main` 分支，或在 Actions 页面手动 `workflow_dispatch`。
-- **矩阵** — macOS Apple Silicon（`aarch64`）、macOS Intel（`x86_64`）、Windows（`x86_64`）三份并行。
-- **产物** — 构建后作为 artifact 上传（`.app` / `.dmg` / `.msi` / `.exe`），不签名、不发 Release。
+- **push 到 `main`** - 构建三平台并上传 artifact（CI 验证 + 取最新版），**不**发 Release。
+- **手动 `workflow_dispatch`** - 注入版本号构建，完成后自动打 tag + 发 GitHub Release，安装包（`.dmg` / `.msi` / `.exe`）作为 Release 资产上传。在仓库 **Actions -> build -> Run workflow** 手动触发。
 
-> 当前为**未签名**构建。如需发 Release 或加签名（macOS Apple 公证 / Windows 代码签名），修改 workflow 并配置相应 secrets 即可。
+**矩阵** - macOS Apple Silicon（`aarch64`）、macOS Intel（`x86_64`）、Windows（`x86_64`）三份并行。
+
+> 当前为**未签名**构建。macOS 用户首次打开需右键->打开或 `xattr -dr com.apple.quarantine`；Windows 会有 SmartScreen 提示。如需签名（macOS Apple 公证 / Windows 代码签名），配置相应 secrets 并修改 workflow 即可。
+
+### 版本管理
+
+版本号由 git 历史自动推导（`scripts/version.mjs`），无需手动维护 patch：
+
+- **格式** - `MAJOR.MINOR.PATCH`，初始版本 `v1.0.0`。
+- **PATCH 自增** - PATCH = 自最近的基线 tag 以来的提交数。每次提交自动 +1。
+  - 例：基线 tag `v1.0.0` 之后第 3 次提交 -> 版本 `1.0.3`。
+- **MINOR / MAJOR 升级** - 在目标 commit 上打一个新基线 tag（如 `v1.1.0`、`v2.0.0`），PATCH 自动归零重算。
+  - 例：打 `v1.1.0` 后第 1 次提交 -> `1.1.1`（不再延续 1.0.x）。
+- **发版流程** - 平时 push 不发版；想发版时在 Actions 手动触发 `workflow_dispatch`，CI 按当前提交推导版本、构建、打 tag `v{版本}` 并发 Release。
+- **首次发版** - 仓库尚无任何 `v*` tag 时，第一次手动发版即为 `v1.0.0`，并创建该基线 tag。
+
+仓库内的版本文件（`package.json` / `tauri.conf.json` / `Cargo.toml`）始终保留**基线版本**（如 `1.0.0`）；带 PATCH 的完整版本号只在发版构建时由 CI 临时注入，不回写仓库，保持提交历史干净。
+
+**升级 minor/major 示例：**
+
+```bash
+# 在目标 commit 上打新基线 tag 并推送（patch 从此归零重算）
+git tag v1.1.0
+git push Ydisks-drive-assistant v1.1.0
+# 之后在 Actions 手动触发一次发版 -> 发布 v1.1.0，后续提交自动 1.1.1、1.1.2 …
+```
 
 ---
 
