@@ -11,21 +11,26 @@ export function ShortLinkTargets({
   onChangeDomain,
   targets,
   onToggle,
+  disabled = false,
 }: {
   domainOptions: DomainOption[];
   targets: ShortLinkTarget[];
   onChangeDomain: (targetId: string, domain: string) => void;
   onToggle: (targetId: string) => void;
+  /** 未连接后台时整体禁用，并提示连接后可用。 */
+  disabled?: boolean;
 }) {
   return (
-    <div className="shortlink-targets">
+    <div className={`shortlink-targets${disabled ? ' is-disabled' : ''}`}>
       <div className="shortlink-targets-head">
         <div>
           <span className="eyebrow">多渠道短链</span>
           <h3>转存后批量创建短链</h3>
         </div>
       </div>
-      {targets.length > 0 ? (
+      {disabled ? (
+        <div className="provider-empty">未连接 Ydisks 后台，本次仅转存。连接 API Key 后可在此一键创建多渠道短链。</div>
+      ) : targets.length > 0 ? (
         <div className="shortlink-target-list">
           {targets.map((target) => (
             <div className={`shortlink-target ${target.enabled ? '' : 'is-disabled'}`} key={target.id}>

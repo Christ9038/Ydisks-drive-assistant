@@ -131,9 +131,12 @@ export function TasksPage({
     : Math.min(validCount, Math.floor(remainingLinks / channelCount));
   const waiting = Math.max(validCount - executable, 0);
   const selectedTargetsReady = selectedTargets.every((target) => Boolean(target.domain));
+  // 是否已连接 Ydisks 后台（有后台账号即等价于 API Key 检测通过）。未连接时走「仅转存」模式：
+  // 后台账号选择与短链渠道禁用，转存成功即完成，不创建短链。
+  const hasBackend = ydisksAccounts.length > 0;
   const canSubmit = validCount > 0
     && selectedTargetsReady
-    && Boolean(selectedProviderAccount && isProviderAccountUsable(selectedProviderAccount) && selectedYdisksAccount);
+    && Boolean(selectedProviderAccount && isProviderAccountUsable(selectedProviderAccount));
 
   const appendResources = (parsedResources: ParsedResource[], filteredFromParser = 0) => {
     setResources((current) => [
@@ -205,15 +208,15 @@ export function TasksPage({
   };
 
   const submitBatch = () => {
-    if (!canSubmit || !selectedProviderAccount || !selectedYdisksAccount) {
+    if (!canSubmit || !selectedProviderAccount) {
       return;
     }
     onCreateBatch({
       provider,
       providerAccountId,
       providerAccountName: selectedProviderAccount.displayName,
-      ydisksAccountId: selectedYdisksAccount.id,
-      ydisksAccountName: selectedYdisksAccount.name,
+      ydisksAccountId: selectedYdisksAccount?.id ?? '',
+      ydisksAccountName: selectedYdisksAccount?.name ?? '',
       targetFolderRef,
       shortLinkTargets: selectedTargets,
       resources,
@@ -260,11 +263,12 @@ export function TasksPage({
             value={providerAccountId}
           />
           <SelectField
+            disabled={!hasBackend}
             label="Ydisks 后台账号"
             onChange={setYdisksAccountId}
             options={providerYdisksAccounts.length > 0
               ? providerYdisksAccounts.map((account) => ({ value: account.id, label: account.name }))
-              : [{ value: '', label: `暂无${providerLabels[provider]}后台账号` }]}
+              : [{ value: '', label: hasBackend ? `暂无${providerLabels[provider]}后台账号` : '未连接后台（仅转存）' }]}
             value={ydisksAccountId}
           />
           <DirectorySelectField
@@ -275,7 +279,13 @@ export function TasksPage({
             onOpen={() => setFolderPickerOpen(true)}
           />
         </div>
+        {!hasBackend ? (
+          <Callout tone="info" title="仅转存模式">
+            未连接 Ydisks 后台，本次将仅把资源转存到你的网盘，不创建短链。前往「设置」连接 API Key 后，可一键为转存资源生成多渠道短链。
+          </Callout>
+        ) : null}
         <ShortLinkTargets
+          disabled={!hasBackend}
           domainOptions={availableDomainOptions}
           targets={targetsForAccount}
           onChangeDomain={(targetId, domain) => setTargets((current) => current.map((target) => (

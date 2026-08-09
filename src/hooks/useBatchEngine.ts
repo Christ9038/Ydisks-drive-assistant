@@ -39,6 +39,7 @@ import {
   findItemToTransfer,
   hasSamePlatformBlocker,
   isBatchComplete,
+  needsBackendRegistration,
   reduceContinueBatch,
   reducePauseBatch,
   reduceQueueItemUpdate,
@@ -251,6 +252,20 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
       })
         .then((result) => {
           appendBatchLog(batch.id, createBatchLog('success', `转存完成：${result.shareUrl}`, item.title));
+          // 仅转存模式（无 API Key 或未绑定后台账号）：跳过后台登记，直接完成。
+          // 有后台登记需求时才推进到 creating_original，由短链 effect 接管。
+          const skipBackend = !needsBackendRegistration(batch, apiKey);
+          if (skipBackend) {
+            updateQueueItem(batch.id, item.id, (currentItem) => ({
+              ...currentItem,
+              error: undefined,
+              progress: 100,
+              shareUrl: result.shareUrl,
+              status: 'done',
+              step: '转存完成',
+            }));
+            return;
+          }
           updateQueueItem(batch.id, item.id, (currentItem) => ({
             ...currentItem,
             error: undefined,

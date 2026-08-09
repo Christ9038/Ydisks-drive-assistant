@@ -10,6 +10,7 @@ import {
   findItemToTransfer,
   findItemToShortlink,
   isBatchComplete,
+  needsBackendRegistration,
 } from '../batchReducer';
 import type { BatchRecord } from '../types';
 import type { QueueItem } from '../../types';
@@ -123,6 +124,42 @@ describe('reduceRetryBatch / reduceRetryQueueItem', () => {
     const b = baseBatch([item('waiting_retry', { id: 'I-1' })], { total: 1, retrying: 0 });
     const next = reduceRetryQueueItem(b, 'I-1');
     expect(next.retrying).toBe(0);
+  });
+
+  it('reduceRetryQueueItem 对已转存项（有 shareUrl）跳过转存，回到 creating_original', () => {
+    // 已转存但后台登记失败的项不应重新转存，避免网盘里出现重复文件。
+    const b = baseBatch([item('waiting_retry', { id: 'I-1', shareUrl: 'https://pan.quark.cn/s/mine' })], { total: 1, retrying: 1 });
+    const next = reduceRetryQueueItem(b, 'I-1');
+    expect(next.items[0].status).toBe('creating_original');
+    expect(next.items[0].shareUrl).toBe('https://pan.quark.cn/s/mine');
+  });
+
+  it('reduceRetryBatch 对已转存项跳过转存，未转存项回到 pending', () => {
+    const b = baseBatch([
+      item('waiting_retry', { id: 'I-1', shareUrl: 'https://pan.quark.cn/s/mine' }),
+      item('waiting_retry', { id: 'I-2' }),
+      item('done', { id: 'I-3' }),
+    ], { total: 3, retrying: 2, status: 'waiting_retry' });
+    const next = reduceRetryBatch(b);
+    expect(next.items[0].status).toBe('creating_original');
+    expect(next.items[1].status).toBe('pending');
+    expect(next.items[2].status).toBe('done');
+  });
+});
+
+describe('needsBackendRegistration', () => {
+  it('有 API Key 且有后台账号时需要登记', () => {
+    expect(needsBackendRegistration(baseBatch([item('done')]), 'sk-123')).toBe(true);
+  });
+
+  it('无 API Key 时不需要登记（仅转存）', () => {
+    expect(needsBackendRegistration(baseBatch([item('done')]), '')).toBe(false);
+    expect(needsBackendRegistration(baseBatch([item('done')]), '   ')).toBe(false);
+  });
+
+  it('批次未绑定后台账号时不需要登记（仅转存）', () => {
+    const b = baseBatch([item('done')], { ydisksAccountId: '' });
+    expect(needsBackendRegistration(b, 'sk-123')).toBe(false);
   });
 });
 
