@@ -29,7 +29,7 @@ export function ShortLinkTargets({
         </div>
       </div>
       {disabled ? (
-        <div className="provider-empty">未连接 Ydisks 后台，本次仅转存。连接 API Key 后可在此一键创建多渠道短链。</div>
+        <div className="provider-empty">未连接 Ydisks 后台，本次仅转存。在右上角填写并检测 API Key 后，可在此一键创建多渠道短链。</div>
       ) : targets.length > 0 ? (
         <div className="shortlink-target-list">
           {targets.map((target) => (

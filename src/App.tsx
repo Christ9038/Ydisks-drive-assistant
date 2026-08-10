@@ -564,6 +564,7 @@ function App() {
           </div>
           <div>
             <div className="brand-title">Ydisks批量转存助手</div>
+            <div className="brand-subtitle">ASSISTANT</div>
           </div>
           <button className="mobile-close-button" type="button" aria-label="关闭导航菜单" onClick={() => setSidebarOpen(false)}>
             <XCircle size={18} />
@@ -633,7 +634,7 @@ function App() {
               onClick={clearApiKeyImmediately}
               disabled={!apiKey}
             >
-              <Trash2 size={16} />
+              <Trash2 size={19} strokeWidth={2.1} />
             </button>
           </div>
         </header>
