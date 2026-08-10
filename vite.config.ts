@@ -19,5 +19,20 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'text-summary', 'html', 'lcov'],
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.d.ts',
+        'src/**/*.{test,spec}.{ts,tsx}',
+        'src/**/__tests__/**',
+        'src/test/**',
+        // 纯类型声明文件（无运行时代码，v8 会误报 0%）
+        'src/types.ts',
+        'src/lib/types.ts',
+      ],
+      all: true,
+    },
   },
 });

@@ -20,10 +20,6 @@ export function useThemeMode(): { themeMode: ThemeMode; setThemeMode: (mode: The
   const [themeMode, setThemeMode] = useState<ThemeMode>(loadStoredThemeMode);
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return undefined;
-    }
-
     const media = window.matchMedia('(prefers-color-scheme: dark)');
     const applyTheme = () => {
       const resolvedTheme = resolveThemeMode(themeMode);

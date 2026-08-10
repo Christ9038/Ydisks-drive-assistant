@@ -35,6 +35,7 @@ import {
 } from '../lib/engine';
 import {
   batchToHistory,
+  deriveTransferSuccessUpdate,
   findItemToShortlink,
   findItemToTransfer,
   hasSamePlatformBlocker,
@@ -135,9 +136,8 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
     if (!isTauriRuntime()) {
       return undefined;
     }
-    if (batchSaveTimerRef.current !== null) {
-      window.clearTimeout(batchSaveTimerRef.current);
-    }
+    // 清理函数（return）会在每次 batches 变更前先 clear 上一轮定时器并置空 ref，
+    // 因此这里无需再判空清理——直接设置新的去抖定时器即可。
     batchSaveTimerRef.current = window.setTimeout(() => {
       batchSaveTimerRef.current = null;
       const currentIds = new Set(batches.map((batch) => batch.id));
@@ -251,14 +251,10 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
       })
         .then((result) => {
           appendBatchLog(batch.id, createBatchLog('success', `转存完成：${result.shareUrl}`, item.title));
-          updateQueueItem(batch.id, item.id, (currentItem) => ({
-            ...currentItem,
-            error: undefined,
-            progress: 65,
-            shareUrl: result.shareUrl,
-            status: 'creating_original',
-            step: '当前处理：登记后台原始链接',
-          }));
+          // 仅转存模式（无 API Key 或未绑定后台账号）：跳过后台登记，直接完成。
+          // 有后台登记需求时才推进到 creating_original，由短链 effect 接管。
+          const next = deriveTransferSuccessUpdate(batch, apiKey, result.shareUrl);
+          updateQueueItem(batch.id, item.id, (currentItem) => ({ ...currentItem, ...next }));
         })
         .catch((error) => {
           const message = formatBackendError(error);
@@ -308,6 +304,9 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
       }
 
       const requestKey = `${batch.id}:${item.id}`;
+      // 防御性去重：本 effect 在发起请求前已同步将项翻转为 creating_shortlink（见下文 updateQueueItem），
+      // 故同一项不会被 findItemToShortlink 二次命中，此分支当前不可达。保留以防未来将翻转改为异步
+      // （参照转存 effect 的异步翻转）时对同一项重复发起 createBackendLinks（会造成重复扣费/建链）。
       if (backendRequestsRef.current.has(requestKey)) {
         return;
       }

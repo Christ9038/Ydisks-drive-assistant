@@ -212,9 +212,7 @@ export const advanceLocalBatch = (batch: BatchRecord): BatchRecord => {
     progress,
     retrying,
     waitingQuota,
-    currentStep: completed === items.length
-      ? '全部资源处理完成'
-      : `串行处理第 ${currentIndex}/${items.length} 条`,
+    currentStep: `串行处理第 ${currentIndex}/${items.length} 条`,
     updatedAt: '刚刚',
   };
 };

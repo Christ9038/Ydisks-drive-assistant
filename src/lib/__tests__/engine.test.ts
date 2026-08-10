@@ -70,6 +70,15 @@ describe('advanceQueueItem', () => {
     ]);
     expect(next.step).toContain('2 个渠道短链');
   });
+  it('creating_shortlink 无渠道时 step 为登记后台原始链接', () => {
+    const next = advanceQueueItem({ ...base, status: 'creating_shortlink' }, 0, []);
+    expect(next.step).toBe('当前处理：登记后台原始链接');
+  });
+  it('creating_original -> 等待后台原始链接结果', () => {
+    const next = advanceQueueItem({ ...base, status: 'creating_original' }, 0, []);
+    expect(next.step).toBe('当前处理：等待后台原始链接结果');
+    expect(next.status).toBe('creating_original');
+  });
   it('done 等终态原样返回', () => {
     const item = { ...base, status: 'done' as const };
     expect(advanceQueueItem(item, 0, targets)).toEqual(item);
@@ -100,6 +109,12 @@ describe('normalizePlatformQueues', () => {
     const running = { ...queuedBatch('A'), status: 'running' as const, queuePosition: undefined };
     const result = normalizePlatformQueues([running, queuedBatch('B', 1)]);
     expect(result.find((b) => b.id === 'B')!.status).toBe('queued');
+  });
+  it('排队批次 queuePosition 缺失时按 0 排序并提升队首', () => {
+    const a = { ...queuedBatch('A'), queuePosition: undefined };
+    const b = { ...queuedBatch('B'), queuePosition: undefined };
+    const result = normalizePlatformQueues([a, b]);
+    expect(result.find((x) => x.id === 'A')!.status).toBe('running');
   });
 });
 
@@ -157,6 +172,12 @@ describe('advanceLocalBatch', () => {
   it('无活跃项且有 manual_required → 批次状态 manual_required', () => {
     const next = advanceLocalBatch(baseBatch([item('manual_required')]));
     expect(next.status).toBe('manual_required');
+  });
+
+  it('无活跃项且有 waiting_retry（无 manual / quota）-> 批次状态 waiting_retry', () => {
+    const next = advanceLocalBatch(baseBatch([item('waiting_retry')]));
+    expect(next.status).toBe('waiting_retry');
+    expect(next.currentStep).toBe('等待重试');
   });
 
   it('非运行批次原样返回', () => {

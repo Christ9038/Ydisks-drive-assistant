@@ -26,8 +26,19 @@ describe('formatBackendError', () => {
   it('Error 实例回落到 message', () => {
     expect(formatBackendError(new Error('boom'))).toBe('boom');
   });
+  it('Error 实例但 message 为空时回落到空串（instanceof 分支）', () => {
+    // message 为空串 -> getBackendErrorPayload 返回 null -> 走 instanceof Error 分支
+    expect(formatBackendError(new Error(''))).toBe('');
+  });
   it('其他类型回落到 String', () => {
     expect(formatBackendError(42)).toBe('42');
+  });
+  it('载荷 message 为空字符串时回落到 String', () => {
+    expect(formatBackendError({ message: '' })).toBe('[object Object]');
+  });
+  it('null / 无 message 对象回落到 String', () => {
+    expect(formatBackendError(null)).toBe('null');
+    expect(formatBackendError({ stage: 'x' })).toBe('[object Object]');
   });
 });
 
@@ -59,5 +70,28 @@ describe('extractXunleiReviewState', () => {
   it('从消息中提取 creditKey', () => {
     const state = extractXunleiReviewState({}, 'creditkey: abc123; 其它');
     expect(state.creditKey).toBe('abc123');
+  });
+  it('details.rawReviewUrl 作为 reviewUrlBase 并注入 deviceid', () => {
+    const state = extractXunleiReviewState({ message: 'x', details: { rawReviewUrl: 'https://x.cn/r', deviceId: 'd' } }, 'x');
+    expect(state.rawReviewUrl).toBe('https://x.cn/r');
+    expect(state.reviewUrl).toBe('https://x.cn/r?deviceid=d');
+  });
+  it('从消息中提取 reviewUrl 并去除末尾分隔符', () => {
+    const state = extractXunleiReviewState({}, '请完成 https://x.cn/r）');
+    expect(state.reviewUrl).toBe('https://x.cn/r');
+  });
+  it('deviceSign 作为 deviceId 兜底', () => {
+    const state = extractXunleiReviewState({ message: 'x', details: { deviceSign: 'ds' } }, 'x');
+    expect(state.deviceId).toBe('ds');
+  });
+  it('details.creditKey 优先于消息', () => {
+    const state = extractXunleiReviewState({ message: 'x', details: { creditKey: 'ck1' } }, 'creditkey: msg2');
+    expect(state.creditKey).toBe('ck1');
+  });
+  it('无任何来源时 reviewUrl / creditKey 为空', () => {
+    const state = extractXunleiReviewState({}, '普通消息');
+    expect(state.reviewUrl).toBe('');
+    expect(state.creditKey).toBe('');
+    expect(state.rawReviewUrl).toBe('');
   });
 });

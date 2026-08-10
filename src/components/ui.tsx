@@ -55,16 +55,18 @@ export function SelectField({
   onChange,
   options,
   value,
+  disabled = false,
 }: {
   label: string;
   onChange: (value: string) => void;
   options: Array<{ value: string; label: string }>;
   value: string;
+  disabled?: boolean;
 }) {
   return (
-    <label className="field select-field">
+    <label className={`field select-field${disabled ? ' is-disabled' : ''}`}>
       <span>{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
+      <select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled}>
         {options.map((option) => (
           <option key={option.value} value={option.value}>{option.label}</option>
         ))}

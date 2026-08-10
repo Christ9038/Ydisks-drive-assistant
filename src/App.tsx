@@ -545,8 +545,6 @@ function App() {
             onOpenLogDir={openLogDir}
           />
         );
-      default:
-        return null;
     }
   }, [activePage, apiError, apiKey, apiStatusLabel, apiStatusTitle, apiStatusTone, batches, connectedAccountCount, dedupeEnabled, domainOptions, histories, providerAccounts, quotaState, shortlinkOptions, themeMode, ydisksAccounts]);
 

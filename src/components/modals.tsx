@@ -342,11 +342,10 @@ export function FolderPickerModal({
 
   const jumpToCrumb = (index: number) => {
     const crumb = crumbs[index];
-    if (!crumb) {
-      return;
+    if (crumb) {
+      setCrumbs((current) => current.slice(0, index + 1));
+      setCurrentRef(crumb.folderRef);
     }
-    setCrumbs((current) => current.slice(0, index + 1));
-    setCurrentRef(crumb.folderRef);
   };
 
   return (
