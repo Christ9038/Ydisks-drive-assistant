@@ -33,10 +33,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(isTauriRuntime).mockReturnValue(false);
   storageApi.loadStoredApiKey.mockReturnValue('');
-  loadBackendAssets.mockReset();
-  loadBackendQuota.mockReset();
-  loadBackendAssets.mockResolvedValue(assets);
-  loadBackendQuota.mockResolvedValue({ maxLinks: 100, usedLinks: 1, remainingLinks: 99, shortlinkAccessStatus: 'ACTIVE' });
+  vi.mocked(loadBackendAssets).mockReset();
+  vi.mocked(loadBackendQuota).mockReset();
+  vi.mocked(loadBackendAssets).mockResolvedValue(assets);
+  vi.mocked(loadBackendQuota).mockResolvedValue({ maxLinks: 100, usedLinks: 1, remainingLinks: 99, shortlinkAccessStatus: 'ACTIVE' });
 });
 
 const newHook = (setToast = (_: ToastState | null) => {}) => renderHook(({ toast }) => useApiConnection(toast), { initialProps: { toast: setToast } });
@@ -90,7 +90,7 @@ describe('useApiConnection', () => {
   });
 
   it('detectApiKey 失败：failed + 错误 + danger toast', async () => {
-    loadBackendQuota.mockRejectedValue({ stage: 'backend', message: '无效 Key' });
+    vi.mocked(loadBackendQuota).mockRejectedValue({ stage: 'backend', message: '无效 Key' });
     const setToast = vi.fn();
     const { result } = newHook(setToast);
     act(() => result.current.setApiKeyDraft('bad'));
@@ -103,7 +103,7 @@ describe('useApiConnection', () => {
   });
 
   it('loadBackendAssets 失败时清空资产', async () => {
-    loadBackendAssets.mockRejectedValue({ message: '资产拉取失败' });
+    vi.mocked(loadBackendAssets).mockRejectedValue({ message: '资产拉取失败' });
     const { result } = newHook();
     act(() => result.current.setApiKeyDraft('k1'));
     await act(async () => {
@@ -136,7 +136,7 @@ describe('useApiConnection', () => {
   it('syncQuotaFromBackend 成功覆盖额度', async () => {
     const { result } = newHook();
     act(() => result.current.setApiKeyDraft('k1'));
-    loadBackendQuota.mockResolvedValue({ maxLinks: 200, usedLinks: 50, remainingLinks: 150, shortlinkAccessStatus: 'ACTIVE' });
+    vi.mocked(loadBackendQuota).mockResolvedValue({ maxLinks: 200, usedLinks: 50, remainingLinks: 150, shortlinkAccessStatus: 'ACTIVE' });
     await act(async () => {
       await result.current.syncQuotaFromBackend();
     });
@@ -147,7 +147,7 @@ describe('useApiConnection', () => {
     const { result } = newHook();
     act(() => result.current.setApiKeyDraft('k1'));
     act(() => result.current.deductQuotaLocally(7));
-    loadBackendQuota.mockRejectedValue({ message: '网络错误' });
+    vi.mocked(loadBackendQuota).mockRejectedValue({ message: '网络错误' });
     await act(async () => {
       await result.current.syncQuotaFromBackend();
     });

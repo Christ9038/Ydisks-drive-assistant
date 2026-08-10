@@ -207,7 +207,7 @@ describe('useBatchEngine - 批次操作', () => {
     const id = result.current.batches[0].id;
     act(() => result.current.cancelBatch(id));
     expect(d.requestConfirm).toHaveBeenCalled();
-    const state = d.requestConfirm.mock.calls[0][0] as ConfirmState;
+    const state = vi.mocked(d.requestConfirm).mock.calls[0][0] as ConfirmState;
     expect(state.danger).toBe(true);
     act(() => state.onConfirm());
     expect(result.current.batches).toHaveLength(0);
@@ -270,7 +270,7 @@ describe('useBatchEngine - 转存 effect', () => {
     await waitFor(() => expect(result.current.batches[0]?.items[0]?.status).toBe('manual_required'));
     expect(d.updateProviderAccount).toHaveBeenCalledWith('acc-1', expect.any(Function));
     // 触发 updater 函数体（mock 不会自动执行传入的更新函数）。
-    const updater = d.updateProviderAccount.mock.calls[0][1] as (acc: any) => any;
+    const updater = vi.mocked(d.updateProviderAccount).mock.calls[0][1] as (acc: any) => any;
     const updated = updater({ id: 'acc-1', status: 'connected', pendingReason: '', lastChecked: '' });
     expect(updated.status).toBe('manual_required');
     expect(updated.pendingReason).toBe('账号缺少登录态');
@@ -419,7 +419,7 @@ describe('useBatchEngine - 持久化去抖与失败', () => {
     const id = result.current.batches[0].id;
     // 取消批次 -> 转入历史，运行列表不再包含该 id，去抖后触发 deleteBatchFromDb。
     act(() => result.current.cancelBatch(id));
-    const state = d.requestConfirm.mock.calls[0][0] as ConfirmState;
+    const state = vi.mocked(d.requestConfirm).mock.calls[0][0] as ConfirmState;
     act(() => state.onConfirm());
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);

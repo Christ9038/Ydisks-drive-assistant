@@ -19,7 +19,7 @@ const batchRecord = (over: Partial<BatchRecord> = {}): BatchRecord => ({
 });
 
 const historyRecord = (over: Partial<HistoryRecord> = {}): HistoryRecord => ({
-  id: 'H-1', batchId: 'B-1', status: 'success', createdAt: '2026-01-01 00:00', total: 1, completed: 1, failed: 0, items: [queueItem()], logs: [], ...over,
+  id: 'H-1', status: 'success', createdAt: '2026-01-01 00:00', total: 1, completed: 1, failed: 0, items: [queueItem()], logs: [], ...over,
 });
 
 describe('BatchDetailPage', () => {

@@ -20,7 +20,7 @@ const bridge = vi.hoisted(() => ({
   loginXunleiPassword: vi.fn(() => Promise.resolve()),
   captureProviderLogin: vi.fn(() => Promise.resolve({ cookie: 'ck-new', loginName: 'login-user', cookieCount: 3 })),
   checkProviderLogin: vi.fn(() => Promise.resolve({ cookie: 'ck-checked', loginName: 'checked-user', cookieCount: 3 })),
-  listProviderAccountsFromDb: vi.fn(() => Promise.resolve([])),
+  listProviderAccountsFromDb: vi.fn(() => Promise.resolve([] as ProviderAccount[])),
   upsertProviderAccountToDb: vi.fn(() => Promise.resolve()),
   deleteProviderAccountFromDb: vi.fn(() => Promise.resolve()),
   importLegacyAccountsToDb: vi.fn(() => Promise.resolve(0)),

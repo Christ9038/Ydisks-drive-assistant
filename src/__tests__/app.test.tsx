@@ -20,7 +20,7 @@ const bridge = vi.hoisted(() => ({
   loginXunleiPassword: vi.fn(() => Promise.resolve()),
   captureProviderLogin: vi.fn(() => Promise.resolve({ cookie: 'ck-new', loginName: 'login-user', cookieCount: 3 })),
   checkProviderLogin: vi.fn(() => Promise.resolve({ cookie: 'ck-checked', loginName: 'checked-user', cookieCount: 3 })),
-  listProviderAccountsFromDb: vi.fn(() => Promise.resolve([])),
+  listProviderAccountsFromDb: vi.fn(() => Promise.resolve([] as ProviderAccount[])),
   upsertProviderAccountToDb: vi.fn(() => Promise.resolve()),
   deleteProviderAccountFromDb: vi.fn(() => Promise.resolve()),
   importLegacyAccountsToDb: vi.fn(() => Promise.resolve(0)),
@@ -28,7 +28,7 @@ const bridge = vi.hoisted(() => ({
   loadBatchesFromDb: vi.fn(() => Promise.resolve([])),
   deleteBatchFromDb: vi.fn(() => Promise.resolve()),
   saveHistoryToDb: vi.fn(() => Promise.resolve()),
-  loadHistoryFromDb: vi.fn(() => Promise.resolve([])),
+  loadHistoryFromDb: vi.fn(() => Promise.resolve([] as HistoryRecord[])),
   parseImport: vi.fn(() => Promise.resolve({ accepted: [] as ParsedResource[], filtered: 0 })),
   createBackendLinks: vi.fn(() => Promise.resolve({ originalLinkId: 'L1', shortLinks: [] })),
   loadBackendAssets: vi.fn(() => Promise.resolve({
@@ -37,19 +37,19 @@ const bridge = vi.hoisted(() => ({
   })),
   loadBackendQuota: vi.fn(() => Promise.resolve({ maxLinks: 100, usedLinks: 0, remainingLinks: 100, shortlinkAccessStatus: 'ACTIVE' })),
   openLogDir: vi.fn(() => Promise.resolve('/logs')),
-  downloadHistoryCsv: vi.fn(() => Promise.resolve('/out/history.csv')),
+  downloadHistoryCsv: vi.fn((_history: HistoryRecord) => Promise.resolve('/out/history.csv' as string | null)),
 }));
 vi.mock('../lib/bridge', () => bridge);
 
-const eventApi = vi.hoisted(() => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
+const eventApi = vi.hoisted(() => ({ listen: vi.fn((_event: string, _cb: (e: { payload: unknown }) => void) => Promise.resolve(() => {})) }));
 vi.mock('@tauri-apps/api/event', () => eventApi);
 
 import App from '../App';
 import type { HistoryRecord, ParsedResource } from '../lib/types';
+import type { ProviderAccount } from '../types';
 
 const historyRecord = (overrides: Partial<HistoryRecord> = {}): HistoryRecord => ({
   id: 'H1',
-  batchId: 'B1',
   status: 'success',
   createdAt: '2024-01-01 00:00',
   total: 1,
@@ -626,8 +626,8 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
   });
 
   it('加载过程中卸载组件 -> 取消后续 setProviderAccounts', async () => {
-    let resolveLoad!: (value: unknown) => void;
-    bridge.listProviderAccountsFromDb.mockReturnValue(new Promise((resolve) => { resolveLoad = resolve; }));
+    let resolveLoad!: (value: ProviderAccount[]) => void;
+    bridge.listProviderAccountsFromDb.mockReturnValue(new Promise<ProviderAccount[]>((resolve) => { resolveLoad = resolve; }));
     const { unmount } = renderApp();
     unmount();
     // 卸载后 resolve -> 走 cancelled 提前返回分支
