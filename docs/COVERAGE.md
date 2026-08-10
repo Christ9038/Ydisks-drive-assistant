@@ -45,6 +45,8 @@
 - **运行时切换 `isTauriRuntime` mock**（`app.test.tsx`）：桌面端加载历史后切为浏览器模式导出，覆盖浏览器端 CSV 下载回退分支；另以 `parseImport.mockResolvedValue` + 填表提交覆盖 `onBatchCreated` 全链路。
 - **mock 工厂类型修正**：`parseImport: vi.fn(() => Promise.resolve({ accepted: [] as ParsedResource[], … }))`——空数组标注元素类型，使后续 `mockResolvedValue` 可注入真实资源对象而不触发 `never[]` 推断。
 
-## 基线对照
+## 基线对照与构建状态
 
-修改前后 `tsc --noEmit` 的错误签名集合完全一致（均为仓库既有的、CI 容忍的测试文件类型问题），未引入新类型错误。覆盖率提升全部来自新增测试与上述守卫改写/死代码移除。
+- `tsc --noEmit`：**0 错误**。此前 dev 分支测试文件存在 44 处类型错误（`0635001` 引入，源于提升后的 mock 工厂 `Promise.resolve([])` 被推断为 `never[]`、mock 方法作用于真实函数类型等），main 分支无此问题但合并后会阻断 CI（`beforeBuildCommand: npm run build` = `tsc && vite build`）。已逐处修正：mock 工厂按真实签名标注数组类型、`downloadHistoryCsv`/`listen` mock 补全参数签名、`vi.mocked()` 包裹 mock 方法调用、`historyRecord` 工厂去掉不存在的 `batchId`。未改动任何应用源码与测试运行时行为。
+- `npm run build`：**退出码 0**（`tsc` 通过 + `vite build` 产出 `dist/`），CI 合并后可正常发版。
+- 覆盖率提升全部来自新增测试与守卫改写/死代码移除；类型修复不影响覆盖率。
