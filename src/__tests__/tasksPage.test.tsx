@@ -104,7 +104,7 @@ describe('TasksPage', () => {
     expect(ydisksSelect.disabled).toBe(true);
     expect(ydisksSelect.value).toBe('');
     // 短链渠道区域展示禁用提示而非渠道开关
-    expect(screen.getByText('未连接 Ydisks 后台，本次仅转存。连接 API Key 后可在此一键创建多渠道短链。')).toBeTruthy();
+    expect(screen.getByText('未连接 Ydisks 后台，本次仅转存。在右上角填写并检测 API Key 后，可在此一键创建多渠道短链。')).toBeTruthy();
   });
 
   it('逐条添加：parseImport 成功后资源进入清单', async () => {

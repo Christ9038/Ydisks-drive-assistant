@@ -280,7 +280,7 @@ export function TasksPage({
         </div>
         {!hasBackend ? (
           <Callout tone="info" title="仅转存模式">
-            未连接 Ydisks 后台，本次将仅把资源转存到你的网盘，不创建短链。前往「设置」连接 API Key 后，可一键为转存资源生成多渠道短链。
+            未连接 Ydisks 后台，本次将仅把资源转存到你的网盘，不创建短链。在右上角填写并检测 API Key 后，可一键为转存资源生成多渠道短链。
           </Callout>
         ) : null}
         <ShortLinkTargets
