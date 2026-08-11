@@ -26,7 +26,7 @@ const account = (over: Partial<ProviderAccount> = {}): ProviderAccount => ({
   loginName: 'user',
   purpose: '',
   lastChecked: '-',
-  cookie: 'cookie-value',
+  hasCredential: true,
   ...over,
 });
 
@@ -86,7 +86,7 @@ describe('isProviderAccountUsable', () => {
   });
   it('expired 或无 cookie 不可用', () => {
     expect(isProviderAccountUsable(account({ status: 'expired' }))).toBe(false);
-    expect(isProviderAccountUsable(account({ cookie: undefined }))).toBe(false);
+    expect(isProviderAccountUsable(account({ hasCredential: false }))).toBe(false);
   });
 });
 
@@ -138,7 +138,7 @@ describe('remainingLinksOf', () => {
 describe('normalizeStoredProviderAccounts', () => {
   it('过滤非法对象与 demo 账号并补默认值', () => {
     const result = normalizeStoredProviderAccounts([
-      { id: 'quark-1', provider: 'quark', displayName: '主', status: 'connected', cookie: 'c' },
+      { id: 'quark-1', provider: 'quark', displayName: '主', status: 'connected', hasCredential: true },
       { id: 'quark-main', provider: 'quark' }, // demo 账号被剔除
       { id: 'bad', provider: 'invalid' }, // 平台非法被剔除
       'not-an-object',

@@ -17,8 +17,15 @@ const bridge = vi.hoisted(() => ({
   openXunleiReviewWindow: vi.fn(() => Promise.resolve()),
   closeXunleiReviewWindow: vi.fn(() => Promise.resolve()),
   loginXunleiPassword: vi.fn(() => Promise.resolve()),
-  captureProviderLogin: vi.fn(() => Promise.resolve({ cookie: 'ck-new', loginName: 'login-user', cookieCount: 3 })),
-  checkProviderLogin: vi.fn(() => Promise.resolve({ cookie: 'ck-checked', loginName: 'checked-user', cookieCount: 3 })),
+  captureProviderLogin: vi.fn(() => Promise.resolve({ hasCredential: true, loginName: 'login-user', cookieCount: 3 })),
+  checkProviderLogin: vi.fn(() => Promise.resolve({ hasCredential: true, loginName: 'checked-user', cookieCount: 3 })),
+  saveProviderCredential: vi.fn(() => Promise.resolve({ hasCredential: true, loginName: 'saved-user', cookieCount: 3 })),
+  clearProviderCredentialInDb: vi.fn(() => Promise.resolve()),
+  loadBusinessSettings: vi.fn(() => Promise.resolve({ transferIntervals: { quark: 4, baidu: 4, xunlei: 4 }, hasApiKey: false })),
+  importLegacyBusinessSettings: vi.fn(() => Promise.resolve({ transferIntervals: { quark: 4, baidu: 4, xunlei: 4 }, hasApiKey: false })),
+  saveTransferIntervals: vi.fn((value) => Promise.resolve(value)),
+  configureBackendApiKey: vi.fn(() => Promise.resolve({ maxLinks: 100, usedLinks: 0, remainingLinks: 100, shortlinkAccessStatus: 'ACTIVE' })),
+  clearBackendApiKey: vi.fn(() => Promise.resolve()),
   listProviderAccountsFromDb: vi.fn(() => Promise.resolve([])),
   upsertProviderAccountToDb: vi.fn(() => Promise.resolve()),
   deleteProviderAccountFromDb: vi.fn(() => Promise.resolve()),
@@ -78,7 +85,7 @@ const xunleiStub = vi.hoisted(() => {
   });
   const qrAccount = {
     id: 'x1', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷主号',
-    status: 'manual_required', loginName: '', purpose: '转存', lastChecked: '', cookie: undefined,
+    status: 'manual_required', loginName: '', purpose: '转存', lastChecked: '', hasCredential: false,
   };
   return {
     hook: vi.fn(() => build({ xunleiQrAccount: qrAccount })),
@@ -121,8 +128,7 @@ describe('App - XunleiQrModal 条件渲染（659-667）', () => {
   });
 
   it('点击「立即检查」触发 handleProviderCheck（onSubmit L666）', async () => {
-    // 浏览器模式：账号从 localStorage 加载且不被 DB 迁移清空，便于 handleProviderCheck 命中
-    bridge.isTauriRuntime.mockReturnValue(false);
+    bridge.isTauriRuntime.mockReturnValue(true);
     // 二维码已生成时「立即检查」按钮启用
     xunleiStub.hook.mockReturnValue(
       xunleiStub.build({
@@ -130,11 +136,10 @@ describe('App - XunleiQrModal 条件渲染（659-667）', () => {
         xunleiQr: { qrcodeSvg: '<svg/>', userCode: 'UC1', expiresIn: 120 },
       }),
     );
-    // 预置同 id 的迅雷账号，使 handleProviderCheck 能找到并走 captureProviderLogin
-    localStorage.setItem('ydisks.transfer.providerAccounts.v2', JSON.stringify([{
-      id: 'x1', provider: 'xunlei', status: 'manual_required', cookie: undefined,
+    bridge.listProviderAccountsFromDb.mockResolvedValueOnce([{
+      id: 'x1', provider: 'xunlei', status: 'manual_required', hasCredential: false,
       displayName: '迅雷主号', platformName: '迅雷网盘', loginName: '', purpose: '转存', lastChecked: '-',
-    }]));
+    }] as never[]);
     render(<App />);
     const dialog = await screen.findByRole('dialog', { name: '迅雷扫码授权' });
     const checkBtn = within(dialog).getByRole('button', { name: '立即检查' }) as HTMLButtonElement;
@@ -160,7 +165,7 @@ describe('App - XunleiPasswordModal 条件渲染（669-685）', () => {
       xunleiStub.build({
         xunleiLoginAccount: {
           id: 'x2', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷密码登录',
-          status: 'manual_required', loginName: '', purpose: '转存', lastChecked: '', cookie: undefined,
+          status: 'manual_required', loginName: '', purpose: '转存', lastChecked: '', hasCredential: false,
         },
         xunleiReviewUrl: 'https://review?deviceid=1',
       }),
@@ -177,7 +182,7 @@ describe('App - XunleiPasswordModal 条件渲染（669-685）', () => {
       xunleiStub.build({
         xunleiLoginAccount: {
           id: 'x2', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷密码登录',
-          status: 'manual_required', loginName: '', purpose: '转存', lastChecked: '', cookie: undefined,
+          status: 'manual_required', loginName: '', purpose: '转存', lastChecked: '', hasCredential: false,
         },
         xunleiUsername: 'user',
         xunleiPassword: 'pass',

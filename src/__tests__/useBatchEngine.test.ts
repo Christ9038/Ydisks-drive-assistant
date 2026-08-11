@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 
 const bridge = vi.hoisted(() => ({
+  archiveBatchInDb: vi.fn().mockResolvedValue(undefined),
   createBackendLinks: vi.fn(),
+  createBackendOriginalLink: vi.fn().mockResolvedValue('orig-1'),
+  createBackendShortLink: vi.fn().mockResolvedValue({ channelId: 'c1', channelName: '渠道', domain: 'd.test', shortUrl: 'https://s.test/1' }),
   deleteBatchFromDb: vi.fn(),
   isTauriRuntime: vi.fn(() => false),
   loadBatchesFromDb: vi.fn().mockResolvedValue([]),
@@ -27,7 +30,7 @@ const account = (over: Partial<ProviderAccount> = {}): ProviderAccount => ({
   loginName: '',
   purpose: '',
   lastChecked: '',
-  cookie: 'c',
+  hasCredential: true,
   ...over,
 });
 
@@ -47,13 +50,14 @@ const draft = (over: Partial<BatchDraft> = {}): BatchDraft => ({
 
 const deps = (over: Partial<BatchEngineDeps> = {}): BatchEngineDeps => ({
   providerAccounts: [account()],
-  apiKey: '',
+  hasBackendApiKey: false,
   updateProviderAccount: vi.fn(),
   setToast: vi.fn(),
   requestConfirm: vi.fn(),
   onBatchCreated: vi.fn(),
   deductQuotaLocally: vi.fn(),
   syncQuotaFromBackend: vi.fn().mockResolvedValue(undefined),
+  availableShortLinks: 0,
   ...over,
 });
 
@@ -96,6 +100,11 @@ beforeEach(() => {
   bridge.loadHistoryFromDb.mockResolvedValue([]);
   bridge.transferProviderShare.mockResolvedValue({ shareUrl: 'https://my/s', savedFids: [], title: '资源' });
   bridge.createBackendLinks.mockResolvedValue({ originalLinkId: 'L1', shortLinks: [] });
+  bridge.archiveBatchInDb.mockResolvedValue(undefined);
+  bridge.createBackendOriginalLink.mockResolvedValue('L1');
+  bridge.createBackendShortLink.mockResolvedValue({ channelId: 'c1', channelName: 'Q群', domain: 'd.com', shortUrl: 'https://s/1' });
+  bridge.saveBatchToDb.mockResolvedValue(undefined);
+  bridge.saveHistoryToDb.mockResolvedValue(undefined);
 });
 
 describe('useBatchEngine - createBatch', () => {
@@ -200,7 +209,7 @@ describe('useBatchEngine - 批次操作', () => {
     expect(result.current.batches).toBe(before);
   });
 
-  it('cancelBatch 找到 -> 请求确认；确认后转入历史并 toast', () => {
+  it('cancelBatch 找到 -> 请求确认；确认后原子归档并 toast', async () => {
     const d = deps();
     const { result } = renderEngine(d);
     act(() => result.current.createBatch(draft()));
@@ -209,8 +218,8 @@ describe('useBatchEngine - 批次操作', () => {
     expect(d.requestConfirm).toHaveBeenCalled();
     const state = vi.mocked(d.requestConfirm).mock.calls[0][0] as ConfirmState;
     expect(state.danger).toBe(true);
-    act(() => state.onConfirm());
-    expect(result.current.batches).toHaveLength(0);
+    await act(async () => state.onConfirm());
+    await waitFor(() => expect(result.current.batches).toHaveLength(0));
     expect(result.current.histories.length).toBeGreaterThanOrEqual(1);
     expect(d.setToast).toHaveBeenCalledWith({ message: '批次已取消', tone: 'info' });
   });
@@ -242,7 +251,7 @@ describe('useBatchEngine - 转存 effect', () => {
   it('仅转存模式（无 API Key）：转存成功直接 done 并转入历史', async () => {
     bridge.isTauriRuntime.mockReturnValue(true);
     bridge.loadBatchesFromDb.mockResolvedValue([seededBatch()]);
-    const d = deps({ apiKey: '' });
+    const d = deps({ hasBackendApiKey: false });
     const { result } = renderEngine(d);
     await waitFor(() => expect(bridge.transferProviderShare).toHaveBeenCalled());
     await waitFor(() => expect(result.current.histories.length).toBeGreaterThanOrEqual(1));
@@ -251,11 +260,11 @@ describe('useBatchEngine - 转存 effect', () => {
 
   it('有后台登记：转存成功推进到 creating_original 并创建短链', async () => {
     bridge.isTauriRuntime.mockReturnValue(true);
-    bridge.loadBatchesFromDb.mockResolvedValue([seededBatch({ ydisksAccountId: 'y1' })]);
-    bridge.createBackendLinks.mockResolvedValue({ originalLinkId: 'L1', shortLinks: [{ channelId: 'c1', channelName: 'Q群', domain: 'd.com', shortUrl: 'https://s/1' }] });
-    const d = deps({ apiKey: 'k' });
+    bridge.loadBatchesFromDb.mockResolvedValue([seededBatch({ ydisksAccountId: 'y1', shortLinkTargetCount: 1, shortLinkTargets: [{ id: 'c1', channelId: 'c1', channelName: 'Q群', domain: 'd.com', ydisksAccountId: 'y1', ydisksAccountName: 'Y', enabled: true }] })]);
+    const d = deps({ hasBackendApiKey: true });
     const { result } = renderEngine(d);
-    await waitFor(() => expect(bridge.createBackendLinks).toHaveBeenCalled());
+    await waitFor(() => expect(bridge.createBackendOriginalLink).toHaveBeenCalled());
+    await waitFor(() => expect(bridge.createBackendShortLink).toHaveBeenCalled());
     await waitFor(() => expect(d.deductQuotaLocally).toHaveBeenCalledWith(1));
     await waitFor(() => expect(result.current.histories.length).toBeGreaterThanOrEqual(1));
   });
@@ -287,7 +296,7 @@ describe('useBatchEngine - 转存 effect', () => {
     expect(d.updateProviderAccount).not.toHaveBeenCalled();
   });
 
-  it('同平台连续转存触发限流排队', async () => {
+  it('前端不执行配置限流，连续项统一委托 Rust 后台', async () => {
     bridge.isTauriRuntime.mockReturnValue(true);
     bridge.transferProviderShare.mockResolvedValue({ shareUrl: 'https://my/s', savedFids: [], title: '资源' });
     bridge.loadBatchesFromDb.mockResolvedValue([seededBatch({
@@ -297,11 +306,8 @@ describe('useBatchEngine - 转存 effect', () => {
         { id: 'I-2', provider: 'quark', accountId: 'acc-1', sourceUrl: 'https://s2', title: '资源2', valid: true, status: 'pending', step: '排队等待', progress: 0, accountName: '主账号' },
       ],
     })]);
-    const d = deps({ apiKey: '' });
-    const { result } = renderEngine(d);
-    await waitFor(() => expect(bridge.transferProviderShare).toHaveBeenCalledTimes(1));
-    // I-2 经两轮轮询进入 sharing 后，因距上次转存 <4s 被限流排队
-    await waitFor(() => expect(result.current.batches[0]?.items.find((i) => i.id === 'I-2')?.step).toBe('转存排队中（限流间隔）'), { timeout: 5000 });
+    renderEngine(deps({ hasBackendApiKey: false }));
+    await waitFor(() => expect(bridge.transferProviderShare).toHaveBeenCalledTimes(2), { timeout: 5000 });
   });
 
   it('多批次并行转存时 appendBatchLog 仅更新目标批次', async () => {
@@ -325,10 +331,10 @@ describe('useBatchEngine - 短链 effect', () => {
       ydisksAccountId: 'y1',
       items: [{ id: 'I-1', provider: 'quark', accountId: 'acc-1', sourceUrl: 'https://s', title: '资源', valid: true, status: 'creating_original', step: '登记', progress: 65, accountName: '主账号', shareUrl: 'https://my/s' }],
     })]);
-    bridge.createBackendLinks.mockRejectedValue({ message: '后台失败' });
-    const d = deps({ apiKey: 'k' });
+    bridge.createBackendOriginalLink.mockRejectedValue({ message: '后台失败' });
+    const d = deps({ hasBackendApiKey: true });
     const { result } = renderEngine(d);
-    await waitFor(() => expect(bridge.createBackendLinks).toHaveBeenCalled());
+    await waitFor(() => expect(bridge.createBackendOriginalLink).toHaveBeenCalled());
     await waitFor(() => expect(result.current.batches[0]?.items[0]?.status).toBe('waiting_retry'));
   });
 
@@ -338,12 +344,11 @@ describe('useBatchEngine - 短链 effect', () => {
       ydisksAccountId: 'y1',
       items: [{ id: 'I-1', provider: 'quark', accountId: 'acc-1', sourceUrl: 'https://s', title: '资源', valid: true, status: 'creating_original', step: '登记', progress: 65, accountName: '主账号', shareUrl: 'https://my/s' }],
     })]);
-    bridge.createBackendLinks.mockResolvedValue({ originalLinkId: 'L1', shortLinks: [] });
-    const d = deps({ apiKey: 'k' });
+    const d = deps({ hasBackendApiKey: true });
     const { result } = renderEngine(d);
-    await waitFor(() => expect(bridge.createBackendLinks).toHaveBeenCalled());
+    await waitFor(() => expect(bridge.createBackendOriginalLink).toHaveBeenCalled());
     await waitFor(() => expect(result.current.histories.length).toBeGreaterThanOrEqual(1), { timeout: 2000 });
-    expect(d.deductQuotaLocally).toHaveBeenCalledWith(0);
+    expect(d.deductQuotaLocally).not.toHaveBeenCalled();
   });
 });
 
@@ -358,6 +363,80 @@ describe('useBatchEngine - 完成 effect', () => {
     await waitFor(() => expect(result.current.histories.length).toBeGreaterThanOrEqual(1), { timeout: 2000 });
     expect(result.current.batches).toHaveLength(0);
     expect(d.syncQuotaFromBackend).toHaveBeenCalled();
+  });
+
+  it('归档第一次失败后自动重试且不会提前移除批次', async () => {
+    vi.useFakeTimers();
+    bridge.isTauriRuntime.mockReturnValue(true);
+    bridge.loadBatchesFromDb.mockResolvedValue([seededBatch({
+      items: [{ id: 'I-1', provider: 'quark', accountId: 'acc-1', sourceUrl: 'https://s', title: '资源', valid: true, status: 'done', step: '完成', progress: 100 }],
+    })]);
+    bridge.archiveBatchInDb.mockRejectedValueOnce(new Error('db')).mockResolvedValueOnce(undefined);
+    const d = deps();
+    const { result } = renderEngine(d);
+    await act(async () => { await vi.runAllTicks(); });
+    expect(result.current.batches).toHaveLength(1);
+    expect(d.setToast).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('自动重试') }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await act(async () => { await vi.runAllTicks(); });
+    expect(bridge.archiveBatchInDb).toHaveBeenCalledTimes(2);
+    expect(result.current.batches).toHaveLength(0);
+    vi.useRealTimers();
+  });
+});
+
+describe('useBatchEngine - 修复项回归', () => {
+  const target = (id: string) => ({ id, channelId: id, channelName: id, domain: 'd.com', ydisksAccountId: 'y1', ydisksAccountName: 'Y', enabled: true });
+
+  it('额度恢复只释放实际可负担的 waiting_quota 项', async () => {
+    bridge.isTauriRuntime.mockReturnValue(true);
+    bridge.loadBatchesFromDb.mockResolvedValue([seededBatch({
+      status: 'waiting_quota', waitingQuota: 2, shortLinkTargets: [target('c1'), target('c2')], shortLinkTargetCount: 2,
+      items: [
+        { id: 'I-1', provider: 'quark', sourceUrl: 'u1', title: '1', valid: true, status: 'waiting_quota', step: '等待', progress: 0 },
+        { id: 'I-2', provider: 'quark', sourceUrl: 'u2', title: '2', valid: true, status: 'waiting_quota', step: '等待', progress: 0 },
+      ], total: 2,
+    })]);
+    const initial = deps({ availableShortLinks: 0 });
+    const { result, rerender } = renderHook(({ value }) => useBatchEngine(value), { initialProps: { value: initial } });
+    await waitFor(() => expect(result.current.batches).toHaveLength(1));
+    rerender({ value: { ...initial, availableShortLinks: 2 } });
+    await waitFor(() => expect(result.current.batches[0].waitingQuota).toBe(1));
+    expect(result.current.batches[0].items.map((item) => item.status)).toEqual(['pending', 'waiting_quota']);
+    expect(result.current.batches[0].status).toBe('running');
+  });
+
+  it('断点重试只创建缺失渠道，不重复已完成短链', async () => {
+    bridge.isTauriRuntime.mockReturnValue(true);
+    const targets = [target('c1'), target('c2')];
+    bridge.loadBatchesFromDb.mockResolvedValue([seededBatch({ ydisksAccountId: 'y1', shortLinkTargets: targets, shortLinkTargetCount: 2,
+      items: [{ id: 'I-1', provider: 'quark', sourceUrl: 'u', title: '资源', valid: true, status: 'creating_shortlink', step: '重试', progress: 85, shareUrl: 'share', originalLinkId: 'orig', shortLinks: [{ channelId: 'c1', channelName: 'c1', domain: 'd.com', shortUrl: 'short1' }] }],
+    })]);
+    bridge.createBackendShortLink.mockResolvedValue({ channelId: 'c2', channelName: 'c2', domain: 'd.com', shortUrl: 'short2' });
+    const { result } = renderEngine(deps({ hasBackendApiKey: true }));
+    await waitFor(() => expect(bridge.createBackendShortLink).toHaveBeenCalled());
+    expect(bridge.createBackendShortLink).toHaveBeenCalledTimes(1);
+    expect(bridge.createBackendShortLink.mock.calls[0][1]).toEqual(expect.objectContaining({ channelId: 'c2' }));
+    expect(bridge.createBackendOriginalLink).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current.histories).toHaveLength(1));
+  });
+
+  it('取消后忽略迟到的转存成功响应', async () => {
+    bridge.isTauriRuntime.mockReturnValue(true);
+    bridge.loadBatchesFromDb.mockResolvedValue([seededBatch()]);
+    let resolveTransfer!: (value: { shareUrl: string; savedFids: string[]; title: string }) => void;
+    bridge.transferProviderShare.mockReturnValue(new Promise((resolve) => { resolveTransfer = resolve; }));
+    const d = deps();
+    const { result } = renderEngine(d);
+    await waitFor(() => expect(bridge.transferProviderShare).toHaveBeenCalled());
+    act(() => result.current.cancelBatch('B-seed'));
+    const confirmation = vi.mocked(d.requestConfirm).mock.calls[0][0] as ConfirmState;
+    await act(async () => confirmation.onConfirm());
+    await waitFor(() => expect(result.current.batches).toHaveLength(0));
+    await act(async () => resolveTransfer({ shareUrl: 'late-share', savedFids: [], title: '资源' }));
+    expect(result.current.histories).toHaveLength(1);
+    expect(result.current.histories[0].items[0].shareUrl).toBeUndefined();
+    expect(d.deductQuotaLocally).not.toHaveBeenCalled();
   });
 });
 
@@ -417,14 +496,14 @@ describe('useBatchEngine - 持久化去抖与失败', () => {
     });
     expect(bridge.saveBatchToDb).toHaveBeenCalled();
     const id = result.current.batches[0].id;
-    // 取消批次 -> 转入历史，运行列表不再包含该 id，去抖后触发 deleteBatchFromDb。
+    // 取消批次通过单个事务完成历史保存和活动批次删除。
     act(() => result.current.cancelBatch(id));
     const state = vi.mocked(d.requestConfirm).mock.calls[0][0] as ConfirmState;
-    act(() => state.onConfirm());
+    await act(async () => state.onConfirm());
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
-    expect(bridge.deleteBatchFromDb).toHaveBeenCalledWith(id);
+    expect(bridge.archiveBatchInDb).toHaveBeenCalledWith(id, expect.objectContaining({ id }));
   });
 
   it('写库失败时静默（console.warn）', async () => {
@@ -456,4 +535,3 @@ describe('useBatchEngine - 历史持久化失败', () => {
     warn.mockRestore();
   });
 });
-

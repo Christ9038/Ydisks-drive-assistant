@@ -55,5 +55,14 @@ CREATE TABLE IF NOT EXISTS history (
 );
 "#;
 
+/// 敏感设置迁移（user_version 1 → 2）。运行参数位于后端配置文件；此表仅保存秘密值。
+pub const SCHEMA_V2: &str = r#"
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"#;
+
 /// 当前目标 schema 版本。
-pub const CURRENT_VERSION: u32 = 1;
+pub const CURRENT_VERSION: u32 = 2;

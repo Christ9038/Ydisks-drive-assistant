@@ -20,7 +20,7 @@ Ydisks批量转存助手 — a Tauri v2 desktop app for batch-transferring cloud
 | Backend tests | `cargo test` (run in `src-tauri/`) — unit + ignored live tests |
 | Backend check | `cargo check` / `cargo build` (run in `src-tauri/`) |
 
-**Note:** The frontend depends on Tauri APIs (`@tauri-apps/api/core`). Many features (provider login, share transfer, folder listing, backend API calls) only work inside the Tauri desktop runtime. When running `npm run dev` in a browser, `isTauriRuntime()` returns false and the UI shows "请在桌面端运行" messages; the SQLite-backed persistence also falls back to browser `localStorage` in dev.
+**Note:** The frontend depends on Tauri APIs (`@tauri-apps/api/core`). Business features only work inside the desktop runtime. Browser dev never persists business data; `localStorage` is reserved for theme preference and one-time legacy migration reads.
 
 ## Architecture
 
@@ -35,7 +35,7 @@ Ydisks批量转存助手 — a Tauri v2 desktop app for batch-transferring cloud
   - `format.ts` — `formatBackendError` / `extractXunleiReviewState`.
   - `mappers.ts` — `ProviderAccount`↔`RustAccountRow`, `BatchRecord`↔`RustBatchRow`, `HistoryRecord`↔`RustHistoryRow`, `buildTargetsFromBackendAssets`.
   - `engine.ts` — local batch engine (`advanceLocalBatch`, `normalizePlatformQueues`, `createQueueItemsFromDraft`, factories).
-  - `storage.ts` — `localStorage` read/write/clear for accounts / theme / API key.
+  - `storage.ts` — theme persistence plus one-time readers/cleanup for legacy business data.
   - `bridge.ts` — typed `invoke` wrappers + persistence/asset/loading helpers + `isTauriRuntime` / `waitForNextPaint` / `downloadHistoryCsv` / `openLogDir`. The only frontend module that touches `@tauri-apps/api/core` directly.
   - `batchReducer.ts` — pure batch state-machine transitions (`reduceQueueItemUpdate` progress/status derivation, `reducePauseBatch`/`reduceContinueBatch`/`reduceRetryBatch`/`reduceRetryQueueItem`, `batchToHistory`, `hasSamePlatformBlocker`, `needsBackendRegistration`). Unit-tested; `App` calls these instead of inlining the logic.
   - `types.ts` — shared interfaces & Rust row types used across lib + components + pages.
@@ -68,7 +68,7 @@ Ydisks批量转存助手 — a Tauri v2 desktop app for batch-transferring cloud
 - Theme mode stored under `ydisks.transfer.themeMode.v1` (`light`/`dark`/`system`).
 - Batches are processed by a local engine: `useEffect` interval every 1600ms advances queue items through states (`pending` → `transferring` → `sharing` → `creating_original` → `creating_shortlink` → `done`).
 - Platform-level serialization: only one batch per provider (`quark`/`baidu`/`xunlei`) can be `running` at a time; others queue.
-- **Transfer rate-limit (anti-throttling):** the transfer effect in `useBatchEngine` enforces ≥4000ms between two `transferProviderShare` *initiations* per provider (`lastTransferStartedAtRef`, keyed by `ProviderKey`). When a sharing item's platform last started a transfer <4s ago, the item is skipped this tick (step set to `转存排队中（限流间隔）`) and retried on the next 1.6s poll. The 4s gap is filled by the short-link effect (`createBackendLinks`, which hits the Ydisks backend, not the drive API) so throughput is not wasted. Rate-limit carries across batches (the per-provider timestamp is not reset on batch boundary).
+- **Transfer rate-limit (anti-throttling):** `useBatchEngine` enforces a configurable interval between `transferProviderShare` initiations per provider (`lastTransferStartedAtRef`, keyed by `ProviderKey`). Defaults are 4s for each platform and persisted settings are clamped to a 3s minimum. A throttled item is retried on the next 1.6s poll. The interval carries across batches but resets on app restart.
 - **Quota refresh (optimistic + sync):** `useApiConnection` exposes `deductQuotaLocally(count)` and `syncQuotaFromBackend()`. After each `createBackendLinks` success, `useBatchEngine` calls `deductQuotaLocally(shortLinks.length)` so the displayed "剩余额度" drops immediately without hitting the backend (which would be too frequent during a batch). When a batch fully completes (all items `done`, moved to history), the completion effect calls `syncQuotaFromBackend()` once to reconcile the local optimistic count with the real backend value (corrects cumulative drift). Sync failures are silent (local optimistic value retained).
 - **No-API-Key transfer (growth mode):** basic batch transfer does NOT require an API Key — only the drive login. `needsBackendRegistration(batch, apiKey)` (pure predicate in `batchReducer.ts`) returns false when `apiKey` is blank or the batch has no `ydisksAccountId`; in that case the transfer effect's `.then` sets the item straight to `done` (skipping `creating_original` / `createBackendLinks`), so the short-link effect never picks it up and the batch completes normally. `TasksPage` gates this in UI: when `ydisksAccounts` is empty (no backend), the Ydisks account `SelectField` and `ShortLinkTargets` are disabled and a `Callout` nudges the user to connect for short links; `canSubmit` no longer requires a backend account. Retry avoids duplicate transfers: `reduceRetryBatch`/`reduceRetryQueueItem` route items that already have `shareUrl` back to `creating_original` (resume from backend registration) instead of `pending` (re-transfer).
 - Rust calls go through typed wrappers in `src/lib/bridge.ts` (not raw `invoke`), each guarded by `isTauriRuntime()` with errors normalized via `formatBackendError()`. `App.tsx` and components import these wrappers rather than calling `invoke` directly.
@@ -121,9 +121,9 @@ Module layout:
 4. In frontend, define the Rust return type (prefix `Rust`, e.g. `RustQuarkTransferResult`) in `src/lib/types.ts`.
 5. Call via `invoke<Type>('command_name', { args })` inside an `isTauriRuntime()` guard; format errors with `formatBackendError()`.
 
-### Persistence (SQLite + localStorage migration)
+### Persistence (backend config + SQLite + localStorage migration)
 
-On desktop, accounts / batches / history are persisted to SQLite via `db/` repos (`init_db` runs at setup, `migrate` is version-gated on `CURRENT_VERSION`). On first launch after the migration, legacy `localStorage` accounts are imported once via `import_legacy_accounts_command`. In browser dev (no Tauri runtime), `localStorage` remains the fallback for accounts; batches/history are ephemeral.
+On desktop, non-secret runtime parameters with defaults (currently per-provider transfer intervals) live in the Rust-managed `config.json`; a missing file is generated automatically, writes are atomic, and successful updates are reloaded into backend memory. Account credentials, API Key, batches and history remain in SQLite via `db/` repos. Rust returns only `hasCredential` / `hasApiKey` flags to the UI. Legacy database/localStorage settings are imported once and removed. Browser dev has no business-data persistence.
 
 ### Error handling convention
 
@@ -132,7 +132,7 @@ Backend errors are formatted via `formatBackendError()` (in `src/lib/format.ts`)
 ### State management
 
 All UI state is local React state in `App.tsx`. No external state library. Data flows:
-- `ProviderAccount[]` → persisted to SQLite (desktop) / `localStorage` (browser dev).
+- `ProviderAccount[]` → sanitized UI projection of SQLite rows; Cookie/Token never enters React state.
 - `BatchRecord[]` / `HistoryRecord[]` → persisted to SQLite (desktop); ephemeral in browser dev.
 - `QuotaState` / `ShortLinkTarget[]` / `YdisksAccountOption[]` — fetched from backend API on demand.
 

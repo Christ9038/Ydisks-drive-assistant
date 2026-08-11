@@ -27,7 +27,7 @@ const account = (over: Partial<ProviderAccount> = {}): ProviderAccount => ({
   loginName: 'u',
   purpose: '转存',
   lastChecked: '',
-  cookie: 'c',
+  hasCredential: true,
   ...over,
 });
 
@@ -279,7 +279,7 @@ describe('DirectorySelectField', () => {
     expect(screen.getByText('暂无可用夸克账号')).toBeTruthy();
   });
   it('账号不可用（无 cookie）时禁用', () => {
-    render(<DirectorySelectField account={account({ cookie: undefined, status: 'expired' })} folderName="目录" provider="quark" onOpen={() => {}} />);
+    render(<DirectorySelectField account={account({ hasCredential: false, status: 'expired' })} folderName="目录" provider="quark" onOpen={() => {}} />);
     expect((screen.getByRole('button') as HTMLButtonElement).disabled).toBe(true);
   });
   it('账号可用时启用并点击触发 onOpen，空目录名显示根目录', () => {

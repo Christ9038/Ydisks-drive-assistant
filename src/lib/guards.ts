@@ -42,8 +42,8 @@ export const providerAccountLabel = (accounts: ProviderAccount[], accountId?: st
   return account ? account.displayName : '未分配';
 };
 
-/** 账号是否可用：已连接且持有登录态（cookie）。 */
-export const isProviderAccountUsable = (account: ProviderAccount) => account.status === 'connected' && Boolean(account.cookie);
+/** 账号是否可用：已连接且 Rust 确认持有登录态。 */
+export const isProviderAccountUsable = (account: ProviderAccount) => account.status === 'connected' && account.hasCredential;
 
 /**
  * 把后台账号类型名称映射到本地网盘平台；名称不含已知网盘品牌时返回 null。
@@ -124,6 +124,8 @@ export const normalizeStoredProviderAccounts = (value: unknown): ProviderAccount
         purpose: typeof item.purpose === 'string' ? item.purpose : '',
         lastChecked: typeof item.lastChecked === 'string' && item.lastChecked.trim() ? item.lastChecked : '-',
         pendingReason: typeof item.pendingReason === 'string' ? item.pendingReason : undefined,
+        hasCredential: typeof item.cookie === 'string' && Boolean(item.cookie.trim()),
+        // 仅供启动时一次性迁移到 Rust；迁移完成后立即删除 localStorage。
         cookie: typeof item.cookie === 'string' && item.cookie.trim() ? item.cookie : undefined,
       };
     });

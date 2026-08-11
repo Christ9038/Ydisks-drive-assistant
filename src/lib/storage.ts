@@ -1,19 +1,34 @@
-// localStorage 持久化纯函数：网盘账号 / 主题模式 / API Key 的读写与清除。
+// localStorage 仅保存纯前端主题偏好；账号读取只用于旧版本的一次性迁移。
 //
 // 这些函数直接读写 window.localStorage，并在 SSR（无 window）与异常时安全降级。
 // 测试时通过 jsdom 提供的 localStorage 或注入 mock 覆盖。
 
-import type { ProviderAccount } from '../types';
 import {
   apiKeyStorageKey,
-  legacyDemoProviderAccountIds,
   providerAccountsStorageKey,
   themeModeStorageKey,
+  transferIntervalsStorageKey,
+  defaultTransferIntervals,
+  minimumTransferIntervalSeconds,
 } from './constants';
 import { isThemeMode, normalizeStoredProviderAccounts } from './guards';
-import type { ThemeMode } from './types';
+import type { ThemeMode, TransferIntervalSettings } from './types';
 
-/** 从 localStorage 读取并归一化网盘账号数组；无 window 或异常时返回空数组。 */
+const normalizeTransferInterval = (value: unknown, fallback: number) => {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? Math.max(minimumTransferIntervalSeconds, Math.round(parsed)) : fallback;
+};
+
+export const normalizeTransferIntervals = (value: unknown): TransferIntervalSettings => {
+  const record = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return {
+    quark: normalizeTransferInterval(record.quark, defaultTransferIntervals.quark),
+    baidu: normalizeTransferInterval(record.baidu, defaultTransferIntervals.baidu),
+    xunlei: normalizeTransferInterval(record.xunlei, defaultTransferIntervals.xunlei),
+  };
+};
+
+/** 从旧版 localStorage 读取账号用于一次性迁移；新版本绝不向此处写账号。 */
 export const loadStoredProviderAccounts = () => {
   if (typeof window === 'undefined') {
     return [];
@@ -26,15 +41,30 @@ export const loadStoredProviderAccounts = () => {
   }
 };
 
-/** 把网盘账号数组写入 localStorage（剔除早期 demo 账号）。 */
-export const saveStoredProviderAccounts = (accounts: ProviderAccount[]) => {
-  if (typeof window === 'undefined') {
-    return;
+/** 读取旧版业务配置，仅用于成功迁移到 Rust 前的启动流程。 */
+export const loadLegacyBusinessSettings = (): { apiKey?: string; transferIntervals?: TransferIntervalSettings } => {
+  if (typeof window === 'undefined') return {};
+  try {
+    const apiKey = window.localStorage.getItem(apiKeyStorageKey)?.trim() || undefined;
+    const rawIntervals = window.localStorage.getItem(transferIntervalsStorageKey);
+    return {
+      apiKey,
+      transferIntervals: rawIntervals ? normalizeTransferIntervals(JSON.parse(rawIntervals)) : undefined,
+    };
+  } catch {
+    return {};
   }
-  window.localStorage.setItem(
-    providerAccountsStorageKey,
-    JSON.stringify(accounts.filter((account) => !legacyDemoProviderAccountIds.has(account.id))),
-  );
+};
+
+/** Rust 确认迁移成功后清理旧业务配置。 */
+export const clearLegacyBusinessSettings = () => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(apiKeyStorageKey);
+    window.localStorage.removeItem(transferIntervalsStorageKey);
+  } catch {
+    /* 旧数据清理失败不影响 Rust 已保存的配置 */
+  }
 };
 
 /** 读取主题模式；非法值或无 window 时返回 'system'。 */
@@ -57,40 +87,4 @@ export const resolveThemeMode = (mode: ThemeMode): 'light' | 'dark' => {
     return mode === 'dark' ? 'dark' : 'light';
   }
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-};
-
-/** 读取已保存的 API Key；无 window 或异常时返回空串。 */
-export const loadStoredApiKey = (): string => {
-  if (typeof window === 'undefined') {
-    return '';
-  }
-  try {
-    return window.localStorage.getItem(apiKeyStorageKey) ?? '';
-  } catch {
-    return '';
-  }
-};
-
-/** 保存 API Key 到 localStorage。 */
-export const saveStoredApiKey = (key: string) => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  try {
-    window.localStorage.setItem(apiKeyStorageKey, key);
-  } catch {
-    /* ignore quota / privacy errors */
-  }
-};
-
-/** 清除已保存的 API Key。 */
-export const clearStoredApiKey = () => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  try {
-    window.localStorage.removeItem(apiKeyStorageKey);
-  } catch {
-    /* ignore */
-  }
 };

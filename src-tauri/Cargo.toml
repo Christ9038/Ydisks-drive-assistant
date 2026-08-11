@@ -27,8 +27,9 @@ sha1 = "0.10"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = { version = "2", features = [] }
 tauri-plugin-log = { version = "2", features = ["tracing"] }
-tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }
 tracing = "0.1"
+uuid = { version = "1", features = ["v7"] }
 
 [dev-dependencies]
 pretty_assertions = "1"

@@ -2,25 +2,30 @@
 //!
 //! 21 个原有命令签名与行为保持不变；另新增账号 / 批次 / 历史持久化命令。
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::auth::{
-    capture_provider_login, capture_quark_login_cookie, open_provider_login_window,
-    open_quark_login_window, open_xunlei_review_window, provider_account_info,
+    capture_provider_login, open_provider_login_window, open_xunlei_review_window,
+    provider_account_info,
 };
 use crate::backend::assets::{fetch_backend_assets, fetch_backend_quota};
 use crate::backend::links::{
     build_original_link_payload, build_short_link_payloads, create_backend_links,
+    create_original_link, create_short_link,
 };
-use crate::db::{account_repo, batch_repo, models::AccountRow};
+use crate::db::{
+    account_repo, batch_repo,
+    models::{AccountMetadata, AccountRow, AccountView},
+    settings_repo::{self, BusinessSettings, TransferIntervals},
+};
 use crate::error::{backend_error, BackendClientError};
 use crate::import::parser::{calculate_quota_plan, parse_import_csv, parse_import_text};
-use crate::providers::quark::{quark_account_info, transfer_quark_share};
 use crate::providers::xunlei::{
     check_xunlei_login_status, start_xunlei_login, xunlei_password_login,
 };
 use crate::providers::{list_provider_folders, transfer_provider_share};
+use crate::rate_limit::TransferRateLimiter;
 use crate::types::*;
 
 /// 在阻塞任务中获取数据库连接锁。
@@ -29,16 +34,84 @@ where
     F: FnOnce(&mut rusqlite::Connection) -> Result<T, BackendClientError> + Send + 'static,
     T: Send + 'static,
 {
-    let stage = stage.to_string();
-    let db = crate::db::db(app)?;
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let mut conn = db
-            .lock()
-            .map_err(|_| backend_error(&stage, -7, "数据库锁定失败"))?;
-        f(&mut conn)
+    crate::db::with_connection(app, stage, f).await
+}
+
+fn provider_from_db(value: &str) -> Result<Provider, BackendClientError> {
+    match value {
+        "quark" => Ok(Provider::Quark),
+        "baidu" => Ok(Provider::Baidu),
+        "xunlei" => Ok(Provider::Xunlei),
+        _ => Err(backend_error("provider", -3, "账号平台无效")),
+    }
+}
+
+async fn load_account_credential(
+    app: &AppHandle,
+    account_id: String,
+) -> Result<(Provider, String), BackendClientError> {
+    let account = with_db(app, "db", move |conn| {
+        account_repo::find_account(conn, &account_id)?
+            .ok_or_else(|| backend_error("db", -3, "账号不存在"))
     })
-    .await
-    .map_err(|e| backend_error("db", -7, format!("数据库任务失败：{e}")))?;
+    .await?;
+    let provider = provider_from_db(&account.provider)?;
+    let credential = account
+        .credential
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| backend_error("auth", 1002, "账号缺少登录态，请重新登录"))?;
+    Ok((provider, credential))
+}
+
+async fn stored_api_key(app: &AppHandle) -> Result<String, BackendClientError> {
+    let key = with_db(app, "settings", |conn| settings_repo::load_api_key(conn)).await?;
+    if key.trim().is_empty() {
+        Err(backend_error("backend", 401, "尚未配置 API Key"))
+    } else {
+        Ok(key)
+    }
+}
+
+#[tauri::command]
+pub async fn create_original_link_command(
+    app: AppHandle,
+    account_id: String,
+    title: String,
+    share_url: String,
+) -> Result<String, BackendClientError> {
+    let api_key = stored_api_key(&app).await?;
+    let started = std::time::Instant::now();
+    let result = create_original_link(&api_key, &account_id, &title, &share_url).await;
+    match &result {
+        Ok(id) => {
+            tracing::info!(operation = "create_original_link", original_link_id = %id, duration_ms = started.elapsed().as_millis(), "后台原始链接创建成功")
+        }
+        Err(error) => {
+            tracing::error!(operation = "create_original_link", stage = %error.stage, code = error.code, duration_ms = started.elapsed().as_millis(), "后台原始链接创建失败")
+        }
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn create_short_link_command(
+    app: AppHandle,
+    title: String,
+    original_link_id: String,
+    target: BackendShortLinkTarget,
+) -> Result<BackendShortLinkResult, BackendClientError> {
+    let api_key = stored_api_key(&app).await?;
+    let started = std::time::Instant::now();
+    let channel_id = target.channel_id.clone();
+    let result = create_short_link(&api_key, &title, &original_link_id, &target).await;
+    match &result {
+        Ok(_) => {
+            tracing::info!(operation = "create_short_link", channel_id = %channel_id, duration_ms = started.elapsed().as_millis(), "渠道短链创建成功")
+        }
+        Err(error) => {
+            tracing::error!(operation = "create_short_link", channel_id = %channel_id, stage = %error.stage, code = error.code, duration_ms = started.elapsed().as_millis(), "渠道短链创建失败")
+        }
+    }
     result
 }
 
@@ -103,58 +176,35 @@ pub fn preview_quota(
 /// 拉取 Ydisks 账号/渠道/域名等资产，委托 `backend::assets::fetch_backend_assets`。
 #[tauri::command]
 pub async fn fetch_backend_assets_command(
-    api_key: String,
+    app: AppHandle,
 ) -> Result<BackendAssetsSnapshot, BackendClientError> {
+    let api_key = stored_api_key(&app).await?;
     fetch_backend_assets(&api_key).await
 }
 
 /// 查询短链额度汇总，委托 `backend::assets::fetch_backend_quota`。
 #[tauri::command]
 pub async fn fetch_backend_quota_command(
-    api_key: String,
+    app: AppHandle,
 ) -> Result<BackendQuotaSummary, BackendClientError> {
+    let api_key = stored_api_key(&app).await?;
     fetch_backend_quota(&api_key).await
 }
 
 /// 注册原始链接并创建短链，委托 `backend::links::create_backend_links`。
 #[tauri::command]
 pub async fn create_backend_links_command(
-    api_key: String,
+    app: AppHandle,
     account_id: String,
     title: String,
     share_url: String,
     targets: Vec<BackendShortLinkTarget>,
 ) -> Result<BackendCreationResult, BackendClientError> {
+    let api_key = stored_api_key(&app).await?;
     create_backend_links(&api_key, &account_id, &title, &share_url, &targets).await
 }
 
 // === 登录 ===
-
-/// 打开夸克官方登录窗口，委托 `auth::open_quark_login_window`。
-#[tauri::command]
-pub async fn open_quark_login_window_command(
-    app: AppHandle,
-    account_id: String,
-) -> Result<(), BackendClientError> {
-    open_quark_login_window(app, account_id).await
-}
-
-/// 从夸克登录窗口采集 Cookie，委托 `auth::capture_quark_login_cookie`。
-#[tauri::command]
-pub async fn capture_quark_login_cookie_command(
-    app: AppHandle,
-    account_id: String,
-) -> Result<QuarkLoginResult, BackendClientError> {
-    capture_quark_login_cookie(app, account_id).await
-}
-
-/// 校验夸克 Cookie 有效性并返回账号信息，委托 `providers::quark::quark_account_info`。
-#[tauri::command]
-pub async fn check_quark_cookie_command(
-    cookie: String,
-) -> Result<QuarkLoginResult, BackendClientError> {
-    quark_account_info(&cookie).await
-}
 
 /// 打开指定网盘官方登录窗口，委托 `auth::open_provider_login_window`。
 #[tauri::command]
@@ -198,20 +248,38 @@ pub async fn start_xunlei_login_command(
 /// 轮询迅雷登录状态，委托 `providers::xunlei::check_xunlei_login_status`。
 #[tauri::command]
 pub async fn check_xunlei_login_command(
+    app: AppHandle,
     account_id: String,
-) -> Result<XunleiLoginCheckResult, BackendClientError> {
-    check_xunlei_login_status(&account_id).await
+) -> Result<XunleiLoginCheckSummary, BackendClientError> {
+    let result = check_xunlei_login_status(&account_id).await?;
+    if let Some(login) = result.result {
+        let summary = ProviderLoginSummary::from(&login);
+        crate::db::save_login_result(&app, account_id, login.cookie, login.login_name).await?;
+        Ok(XunleiLoginCheckSummary {
+            status: result.status,
+            result: Some(summary),
+        })
+    } else {
+        Ok(XunleiLoginCheckSummary {
+            status: result.status,
+            result: None,
+        })
+    }
 }
 
 /// 迅雷账号密码登录（含验证码），委托 `providers::xunlei::xunlei_password_login`。
 #[tauri::command]
 pub async fn login_xunlei_password_command(
+    app: AppHandle,
     account_id: String,
     username: String,
     password: String,
     credit_key: String,
-) -> Result<ProviderLoginResult, BackendClientError> {
-    xunlei_password_login(&account_id, &username, &password, &credit_key).await
+) -> Result<ProviderLoginSummary, BackendClientError> {
+    let result = xunlei_password_login(&account_id, &username, &password, &credit_key).await?;
+    let summary = ProviderLoginSummary::from(&result);
+    crate::db::save_login_result(&app, account_id, result.cookie, result.login_name).await?;
+    Ok(summary)
 }
 
 /// 采集指定网盘登录凭证，委托 `auth::capture_provider_login`。
@@ -220,17 +288,44 @@ pub async fn capture_provider_login_command(
     app: AppHandle,
     provider: Provider,
     account_id: String,
-) -> Result<ProviderLoginResult, BackendClientError> {
-    capture_provider_login(app, provider, account_id).await
+) -> Result<ProviderLoginSummary, BackendClientError> {
+    let result = capture_provider_login(app.clone(), provider, account_id.clone()).await?;
+    let summary = ProviderLoginSummary::from(&result);
+    crate::db::save_login_result(&app, account_id, result.cookie, result.login_name).await?;
+    Ok(summary)
 }
 
-/// 校验网盘登录凭证并返回账号信息，委托 `auth::provider_account_info`。
+/// 从 SQLite 读取账号凭证并校验；凭证不返回前端。
 #[tauri::command]
 pub async fn check_provider_login_command(
-    provider: Provider,
+    app: AppHandle,
+    account_id: String,
+) -> Result<ProviderLoginSummary, BackendClientError> {
+    let (provider, credential) = load_account_credential(&app, account_id.clone()).await?;
+    let result = provider_account_info(provider, &credential).await?;
+    let summary = ProviderLoginSummary::from(&result);
+    crate::db::save_login_result(&app, account_id, result.cookie, result.login_name).await?;
+    Ok(summary)
+}
+
+/// 用户手动粘贴凭证时立即交给 Rust 校验并持久化，前端不保存。
+#[tauri::command]
+pub async fn save_provider_credential_command(
+    app: AppHandle,
+    account_id: String,
     credential: String,
-) -> Result<ProviderLoginResult, BackendClientError> {
-    provider_account_info(provider, &credential).await
+) -> Result<ProviderLoginSummary, BackendClientError> {
+    let account_id_for_lookup = account_id.clone();
+    let account = with_db(&app, "db", move |conn| {
+        account_repo::find_account(conn, &account_id_for_lookup)?
+            .ok_or_else(|| backend_error("db", -3, "账号不存在"))
+    })
+    .await?;
+    let provider = provider_from_db(&account.provider)?;
+    let result = provider_account_info(provider, credential.trim()).await?;
+    let summary = ProviderLoginSummary::from(&result);
+    crate::db::save_login_result(&app, account_id, result.cookie, result.login_name).await?;
+    Ok(summary)
 }
 
 // === 目录与转存 ===
@@ -238,41 +333,55 @@ pub async fn check_provider_login_command(
 /// 列出网盘指定目录下的文件夹，委托 `providers::list_provider_folders`。
 #[tauri::command]
 pub async fn list_provider_folders_command(
-    provider: Provider,
-    credential: String,
+    app: AppHandle,
+    account_id: String,
     folder_ref: String,
 ) -> Result<Vec<ProviderFolderItem>, BackendClientError> {
+    let (provider, credential) = load_account_credential(&app, account_id).await?;
     list_provider_folders(provider, &credential, &folder_ref).await
-}
-
-/// 转存夸克分享并创建新分享，委托 `providers::quark::transfer_quark_share`。
-#[tauri::command]
-pub async fn transfer_quark_share_command(
-    cookie: String,
-    source_url: String,
-    target_folder_ref: String,
-    title: String,
-) -> Result<QuarkTransferResult, BackendClientError> {
-    transfer_quark_share(&cookie, &source_url, &target_folder_ref, &title).await
 }
 
 /// 通用网盘分享转存，委托 `providers::transfer_provider_share`。
 #[tauri::command]
 pub async fn transfer_share_command(
-    provider: Provider,
-    credential: String,
+    app: AppHandle,
+    limiter: State<'_, TransferRateLimiter>,
+    account_id: String,
     source_url: String,
     target_folder_ref: String,
     title: String,
 ) -> Result<ProviderTransferResult, BackendClientError> {
-    transfer_provider_share(
+    let (provider, credential) = load_account_credential(&app, account_id).await?;
+    let provider_key = match provider {
+        Provider::Quark => "quark",
+        Provider::Baidu => "baidu",
+        Provider::Xunlei => "xunlei",
+        Provider::Unknown => "unknown",
+    };
+    let interval = crate::runtime_config::state(&app)?
+        .get()?
+        .transfer_intervals
+        .for_provider(provider_key);
+    limiter.wait(provider_key, interval).await;
+    let started = std::time::Instant::now();
+    let provider_name = format!("{:?}", provider);
+    let result = transfer_provider_share(
         provider,
         &credential,
         &source_url,
         &target_folder_ref,
         &title,
     )
-    .await
+    .await;
+    match &result {
+        Ok(_) => {
+            tracing::info!(operation = "transfer_share", provider = %provider_name, duration_ms = started.elapsed().as_millis(), "网盘转存成功")
+        }
+        Err(error) => {
+            tracing::error!(operation = "transfer_share", provider = %provider_name, stage = %error.stage, code = error.code, duration_ms = started.elapsed().as_millis(), "网盘转存失败")
+        }
+    }
+    result
 }
 
 // === 账号持久化（DB） ===
@@ -281,20 +390,102 @@ pub async fn transfer_share_command(
 #[tauri::command]
 pub async fn list_provider_accounts_command(
     app: AppHandle,
-) -> Result<Vec<AccountRow>, BackendClientError> {
-    with_db(&app, "db", |conn| account_repo::list_accounts(conn)).await
+) -> Result<Vec<AccountView>, BackendClientError> {
+    let rows = with_db(&app, "db", |conn| account_repo::list_accounts(conn)).await?;
+    Ok(rows.into_iter().map(AccountView::from).collect())
 }
 
 /// 新增或更新网盘账号，委托 `db::account_repo::upsert_account`。
 #[tauri::command]
 pub async fn upsert_provider_account_command(
     app: AppHandle,
-    account: AccountRow,
+    account: AccountMetadata,
 ) -> Result<(), BackendClientError> {
     with_db(&app, "db", move |conn| {
-        account_repo::upsert_account(conn, &account)
+        account_repo::upsert_account_metadata(conn, &account)
     })
     .await
+}
+
+/// 清理账号 Cookie/Token；敏感字段只在 SQLite 中修改。
+#[tauri::command]
+pub async fn clear_provider_credential_command(
+    app: AppHandle,
+    id: String,
+) -> Result<(), BackendClientError> {
+    with_db(&app, "db", move |conn| {
+        account_repo::clear_account_credential(conn, &id)
+    })
+    .await
+}
+
+// === 业务设置（DB） ===
+
+#[tauri::command]
+pub async fn get_business_settings_command(
+    app: AppHandle,
+) -> Result<BusinessSettings, BackendClientError> {
+    let transfer_intervals = crate::runtime_config::state(&app)?
+        .get()?
+        .transfer_intervals;
+    let has_api_key = with_db(&app, "settings", |conn| settings_repo::has_api_key(conn)).await?;
+    Ok(BusinessSettings {
+        transfer_intervals,
+        has_api_key,
+    })
+}
+
+#[tauri::command]
+pub async fn set_transfer_intervals_command(
+    app: AppHandle,
+    intervals: TransferIntervals,
+) -> Result<TransferIntervals, BackendClientError> {
+    Ok(crate::runtime_config::state(&app)?
+        .save_and_reload(|config| config.transfer_intervals = intervals)?
+        .transfer_intervals)
+}
+
+/// 验证 API Key 后再由 Rust 持久化，原值不会返回前端。
+#[tauri::command]
+pub async fn configure_backend_api_key_command(
+    app: AppHandle,
+    api_key: String,
+) -> Result<BackendQuotaSummary, BackendClientError> {
+    let normalized = api_key.trim().to_string();
+    if normalized.is_empty() {
+        return Err(backend_error("backend", 401, "API Key 不能为空"));
+    }
+    let quota = fetch_backend_quota(&normalized).await?;
+    with_db(&app, "settings", move |conn| {
+        settings_repo::save_api_key(conn, &normalized)
+    })
+    .await?;
+    Ok(quota)
+}
+
+#[tauri::command]
+pub async fn clear_backend_api_key_command(app: AppHandle) -> Result<(), BackendClientError> {
+    with_db(&app, "settings", |conn| settings_repo::clear_api_key(conn)).await
+}
+
+#[tauri::command]
+pub async fn import_legacy_business_settings_command(
+    app: AppHandle,
+    api_key: Option<String>,
+    intervals: Option<TransferIntervals>,
+) -> Result<BusinessSettings, BackendClientError> {
+    let has_api_key = with_db(&app, "settings", move |conn| {
+        settings_repo::import_legacy_api_key(conn, api_key)
+    })
+    .await?;
+    let config = crate::runtime_config::state(&app)?;
+    if let Some(value) = intervals {
+        config.save_and_reload(|current| current.transfer_intervals = value)?;
+    }
+    Ok(BusinessSettings {
+        transfer_intervals: config.get()?.transfer_intervals,
+        has_api_key,
+    })
 }
 
 /// 删除指定网盘账号，委托 `db::account_repo::delete_account`。
@@ -363,6 +554,23 @@ pub async fn save_history_command(
         batch_repo::save_history(conn, &history)
     })
     .await
+}
+
+#[tauri::command]
+pub async fn archive_batch_command(
+    app: AppHandle,
+    batch_id: String,
+    history: crate::db::models::HistoryRow,
+) -> Result<(), BackendClientError> {
+    let log_id = batch_id.clone();
+    let result = with_db(&app, "db", move |conn| {
+        batch_repo::archive_batch(conn, &batch_id, &history)
+    })
+    .await;
+    if let Err(error) = &result {
+        tracing::error!(batch_id = %log_id, stage = %error.stage, code = error.code, "批次归档失败");
+    }
+    result
 }
 
 /// 加载全部历史记录，委托 `db::batch_repo::list_history`。

@@ -5,10 +5,10 @@
 import { useMemo, useState } from 'react';
 import { Archive, ShieldCheck, Trash2 } from 'lucide-react';
 
-import { providerKeys, providerLabels } from '../lib/constants';
+import { minimumTransferIntervalSeconds, providerKeys, providerLabels } from '../lib/constants';
 import { isAwaitingProviderLogin, remainingLinksOf } from '../lib/guards';
 import type { ProviderAccount, ProviderKey } from '../types';
-import type { QuotaState, ThemeMode } from '../lib/types';
+import type { QuotaState, ThemeMode, TransferIntervalSettings } from '../lib/types';
 import { Callout, Metric, SectionTitle, StatusPill, ThemeModeControl } from '../components/ui';
 
 /** 设置页：后台连接状态 / 网盘账号管理（内含 `ProviderAccountsPanel` 与 `ProviderCard`）/ 显示与日志。 */
@@ -21,6 +21,7 @@ export function SettingsPage({
   providers,
   quota,
   themeMode,
+  transferIntervals,
   onClearApiKey,
   onDetectApiKey,
   onProviderAdd,
@@ -30,6 +31,7 @@ export function SettingsPage({
   onProviderCookiePaste,
   onProviderLogin,
   onThemeModeChange,
+  onTransferIntervalChange,
   onOpenLogDir,
 }: {
   apiError: string;
@@ -40,6 +42,7 @@ export function SettingsPage({
   providers: ProviderAccount[];
   quota: QuotaState;
   themeMode: ThemeMode;
+  transferIntervals: TransferIntervalSettings;
   onClearApiKey: () => void;
   onDetectApiKey: () => void;
   onProviderAdd: (provider: ProviderKey, displayName: string) => void;
@@ -49,12 +52,40 @@ export function SettingsPage({
   onProviderCookiePaste: (accountId: string) => void;
   onProviderLogin: (accountId: string) => void;
   onThemeModeChange: (mode: ThemeMode) => void;
+  onTransferIntervalChange: (provider: ProviderKey, seconds: number) => void;
   onOpenLogDir: () => void;
 }) {
   return (
     <div className="stack">
       <SectionTitle title="设置" />
       <div className="settings-layout">
+        <section className="settings-panel">
+          <div className="settings-panel-head">
+            <div>
+              <span className="eyebrow">风控</span>
+              <h3>转存频率</h3>
+            </div>
+          </div>
+          <Callout tone="info" title="按平台限流">
+            {`限制同一网盘平台两次转存请求的发起间隔。默认 4 秒，最低不能低于 ${minimumTransferIntervalSeconds} 秒。`}
+          </Callout>
+          <div className="form-grid three">
+            {providerKeys.map((provider) => (
+              <label className="field" key={provider}>
+                <span>{providerLabels[provider]}间隔（秒）</span>
+                <input
+                  aria-label={`${providerLabels[provider]}转存间隔`}
+                  min={minimumTransferIntervalSeconds}
+                  step="1"
+                  type="number"
+                  value={transferIntervals[provider]}
+                  onChange={(event) => onTransferIntervalChange(provider, Number(event.target.value))}
+                />
+              </label>
+            ))}
+          </div>
+        </section>
+
         <section className="settings-panel">
           <div className="settings-panel-head">
             <div>
@@ -246,7 +277,7 @@ function ProviderCard({
   onPasteCookie: () => void;
   onLogin: () => void;
 }) {
-  const missingCredential = !provider.cookie;
+  const missingCredential = !provider.hasCredential;
   const effectiveStatus = provider.status === 'manual_required' ? 'manual_required' : missingCredential ? 'expired' : provider.status;
   const tone = effectiveStatus === 'connected' ? 'success' : effectiveStatus === 'expired' ? 'danger' : 'warning';
   const usesAutoLogin = true;

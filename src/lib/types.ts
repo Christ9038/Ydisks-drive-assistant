@@ -16,6 +16,9 @@ import type {
 /** 主题模式：light/dark 跟随系统。 */
 export type ThemeMode = 'light' | 'dark' | 'system';
 
+/** 各网盘平台两次转存发起之间的最小间隔（秒）。 */
+export type TransferIntervalSettings = Record<ProviderKey, number>;
+
 /** 后台短链额度快照。 */
 export interface QuotaState {
   maxLinks: number;
@@ -75,7 +78,7 @@ export interface YdisksAccountOption {
   accountTypeName?: string;
 }
 
-/** 后端 SQLite 账号行。credential 对应前端 ProviderAccount.cookie。 */
+/** Rust 返回的脱敏账号视图，不包含 credential。 */
 export interface RustAccountRow {
   id: string;
   provider: ProviderKey;
@@ -85,7 +88,7 @@ export interface RustAccountRow {
   purpose: string;
   lastChecked: string;
   pendingReason?: string;
-  credential?: string;
+  hasCredential: boolean;
 }
 
 /** 后端 SQLite 批次行。items/logs/shortLinkTargets 以 JSON 字符串存储。 */
@@ -156,9 +159,14 @@ export interface RustQuarkTransferResult {
 }
 
 export interface RustQuarkLoginResult {
-  cookie: string;
   loginName: string;
   cookieCount: number;
+  hasCredential: boolean;
+}
+
+export interface RustBusinessSettings {
+  transferIntervals: TransferIntervalSettings;
+  hasApiKey: boolean;
 }
 
 export interface RustProviderLoginEvent {

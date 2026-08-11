@@ -22,7 +22,7 @@ const account: ProviderAccount = {
   purpose: '转存',
   lastChecked: '2026-01-01',
   pendingReason: undefined,
-  cookie: 'cookie-val',
+  hasCredential: true,
 };
 
 describe('safeParseJsonArray', () => {
@@ -38,12 +38,12 @@ describe('safeParseJsonArray', () => {
 });
 
 describe('accountToRow / accountFromRow 往返', () => {
-  it('cookie 映射为 credential 且可还原', () => {
+  it('只映射脱敏凭证状态', () => {
     const row = accountToRow(account);
-    expect(row.credential).toBe('cookie-val');
+    expect(row.hasCredential).toBe(true);
     expect(row.displayName).toBe('主账号');
     const back = accountFromRow(row);
-    expect(back.cookie).toBe('cookie-val');
+    expect(back.hasCredential).toBe(true);
     expect(back.provider).toBe('quark');
     expect(back.platformName).toBe('夸克网盘');
   });

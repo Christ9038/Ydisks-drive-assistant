@@ -156,7 +156,7 @@ export function useXunleiLogin(
       const result = await loginXunleiPassword(account, username, password, creditKey);
       updateProviderAccount(account.id, (current) => ({
         ...current,
-        cookie: result.cookie,
+        hasCredential: result.hasCredential,
         status: 'connected',
         loginName: result.loginName || '迅雷用户',
         pendingReason: undefined,
@@ -270,7 +270,7 @@ export function useXunleiLogin(
         const result = check.result;
         updateProviderAccount(account.id, (current) => ({
           ...current,
-          cookie: result.cookie,
+          hasCredential: result.hasCredential,
           status: 'connected',
           loginName: result.loginName || '迅雷用户',
           pendingReason: undefined,

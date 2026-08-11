@@ -3,17 +3,23 @@
 // 这些常量被纯函数模块与 App.tsx 组件共用，集中导出以避免重复与漂移。
 
 import type { BatchMonitor, ProviderKey, TaskStatus } from '../types';
-import type { QuotaState } from './types';
+import type { QuotaState, TransferIntervalSettings } from './types';
 
 /** 受支持的网盘平台键。 */
 export const providerKeys: ProviderKey[] = ['quark', 'baidu', 'xunlei'];
 
-/** localStorage 存储键：网盘账号。 */
+/** 旧版 localStorage 键：仅用于一次性迁移网盘账号。 */
 export const providerAccountsStorageKey = 'ydisks.transfer.providerAccounts.v2';
 /** localStorage 存储键：主题模式。 */
 export const themeModeStorageKey = 'ydisks.transfer.themeMode.v1';
-/** localStorage 存储键：API Key。 */
+/** 旧版 localStorage 键：仅用于一次性迁移 API Key。 */
 export const apiKeyStorageKey = 'ydisks.transfer.apiKey.v1';
+/** 旧版 localStorage 键：仅用于一次性迁移按平台转存间隔。 */
+export const transferIntervalsStorageKey = 'ydisks.transfer.intervals.v1';
+
+/** 转存间隔默认 4 秒，任何平台均不得低于 3 秒。 */
+export const minimumTransferIntervalSeconds = 3;
+export const defaultTransferIntervals: TransferIntervalSettings = { quark: 4, baidu: 4, xunlei: 4 };
 
 /** 早期 demo 账号 ID 集合：迁移与保存时一律剔除。 */
 export const legacyDemoProviderAccountIds = new Set([

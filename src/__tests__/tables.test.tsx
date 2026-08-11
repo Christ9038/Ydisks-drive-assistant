@@ -13,6 +13,7 @@ const account = (over: Partial<ProviderAccount> = {}): ProviderAccount => ({
   loginName: 'u1',
   purpose: '转存',
   lastChecked: '',
+  hasCredential: true,
   ...over,
 });
 

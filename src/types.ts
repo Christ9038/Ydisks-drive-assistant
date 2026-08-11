@@ -30,7 +30,8 @@ export interface ProviderAccount {
   purpose: string;
   lastChecked: string;
   pendingReason?: string;
-  cookie?: string;
+  /** Rust 返回的脱敏标志；Cookie/Token 本身永不进入前端状态。 */
+  hasCredential: boolean;
 }
 
 export interface ImportItem {

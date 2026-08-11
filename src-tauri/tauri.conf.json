@@ -33,6 +33,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "macOS": {
+      "files": {
+        "Resources/Assets.car": "icons/macos/Assets.car"
+      },
+      "infoPlist": "Info.macos.plist"
+    },
     "category": "Productivity",
     "shortDescription": "Ydisks批量转存助手",
     "longDescription": "Ydisks批量转存助手：基于 Rust 与系统 WebView 的网盘批量转存与短链创建桌面应用。",

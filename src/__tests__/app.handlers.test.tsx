@@ -18,8 +18,15 @@ const bridge = vi.hoisted(() => ({
   openXunleiReviewWindow: vi.fn(() => Promise.resolve()),
   closeXunleiReviewWindow: vi.fn(() => Promise.resolve()),
   loginXunleiPassword: vi.fn(() => Promise.resolve()),
-  captureProviderLogin: vi.fn(() => Promise.resolve({ cookie: 'ck-new', loginName: 'login-user', cookieCount: 3 })),
-  checkProviderLogin: vi.fn(() => Promise.resolve({ cookie: 'ck-checked', loginName: 'checked-user', cookieCount: 3 })),
+  captureProviderLogin: vi.fn(() => Promise.resolve({ hasCredential: true, loginName: 'login-user', cookieCount: 3 })),
+  checkProviderLogin: vi.fn(() => Promise.resolve({ hasCredential: true, loginName: 'checked-user', cookieCount: 3 })),
+  saveProviderCredential: vi.fn(() => Promise.resolve({ hasCredential: true, loginName: 'saved-user', cookieCount: 3 })),
+  clearProviderCredentialInDb: vi.fn(() => Promise.resolve()),
+  loadBusinessSettings: vi.fn(() => Promise.resolve({ transferIntervals: { quark: 4, baidu: 4, xunlei: 4 }, hasApiKey: false })),
+  importLegacyBusinessSettings: vi.fn(() => Promise.resolve({ transferIntervals: { quark: 4, baidu: 4, xunlei: 4 }, hasApiKey: false })),
+  saveTransferIntervals: vi.fn((value) => Promise.resolve(value)),
+  configureBackendApiKey: vi.fn(() => Promise.resolve({ maxLinks: 100, usedLinks: 0, remainingLinks: 100, shortlinkAccessStatus: 'ACTIVE' })),
+  clearBackendApiKey: vi.fn(() => Promise.resolve()),
   listProviderAccountsFromDb: vi.fn(() => Promise.resolve([] as ProviderAccount[])),
   upsertProviderAccountToDb: vi.fn(() => Promise.resolve()),
   deleteProviderAccountFromDb: vi.fn(() => Promise.resolve()),
@@ -70,7 +77,7 @@ const quarkAccount = (over: Partial<ProviderAccount>): ProviderAccount => ({
   loginName: 'u',
   purpose: '转存',
   lastChecked: '刚刚',
-  cookie: 'ck',
+  hasCredential: true,
   ...over,
 });
 
@@ -78,6 +85,8 @@ const renderApp = () => render(<App />);
 
 const gotoSettings = async () => {
   fireEvent.click(screen.getByRole('button', { name: /^设置$/ }));
+  await waitFor(() => expect(bridge.listProviderAccountsFromDb).toHaveBeenCalled());
+  await act(async () => { await Promise.resolve(); });
   await waitFor(() => expect(captured.current.onProviderCheck).toBeTypeOf('function'));
   return captured.current;
 };
@@ -89,6 +98,8 @@ describe('App handler 防御性守卫（mock SettingsPage 捕获）', () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([]);
     bridge.loadBatchesFromDb.mockResolvedValue([]);
     bridge.loadHistoryFromDb.mockResolvedValue([]);
+    bridge.captureProviderLogin.mockResolvedValue({ hasCredential: true, loginName: 'login-user', cookieCount: 3 });
+    bridge.checkProviderLogin.mockResolvedValue({ hasCredential: true, loginName: 'checked-user', cookieCount: 3 });
     localStorage.clear();
   });
 
@@ -131,7 +142,7 @@ describe('App handler 防御性守卫（mock SettingsPage 捕获）', () => {
         platformName: '迅雷网盘',
         displayName: '迅雷待登录',
         status: 'manual_required',
-        cookie: '',
+        hasCredential: false,
         pendingReason: '请在迅雷官方窗口完成扫码授权',
       }),
     ]);
@@ -148,7 +159,7 @@ describe('App handler 防御性守卫（mock SettingsPage 捕获）', () => {
 
   it('handleProviderCheck connected 无 cookie -> captureProviderLogin（435-436）', async () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([
-      quarkAccount({ id: 'nc1', status: 'connected', cookie: '' }),
+      quarkAccount({ id: 'nc1', status: 'connected', hasCredential: false }),
     ]);
     renderApp();
     const h = await gotoSettings();

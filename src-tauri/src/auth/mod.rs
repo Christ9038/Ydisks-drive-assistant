@@ -9,7 +9,7 @@ use serde::Serialize;
 use tauri::{Emitter, Manager};
 
 use crate::config::{
-    PROVIDER_LOGIN_EVENT, QUARK_LOGIN_URL, XUNLEI_REVIEW_COMPLETE_EVENT, XUNLEI_REVIEW_DONE_PATH,
+    PROVIDER_LOGIN_EVENT, XUNLEI_REVIEW_COMPLETE_EVENT, XUNLEI_REVIEW_DONE_PATH,
     XUNLEI_REVIEW_INIT_SCRIPT, XUNLEI_REVIEW_USER_AGENT,
 };
 use crate::error::{backend_error, BackendClientError};
@@ -17,13 +17,12 @@ use crate::providers::baidu::baidu_account_info;
 use crate::providers::provider_name;
 use crate::providers::quark::{
     build_quark_cookie_header, capture_quark_login_from_window, quark_account_info,
-    quark_login_window_label,
 };
 use crate::providers::xunlei::{
     start_xunlei_login, xunlei_account_info, xunlei_credential_to_storage, xunlei_login_sessions,
     xunlei_poll_device_token,
 };
-use crate::types::{Provider, ProviderLoginResult, QuarkLoginResult};
+use crate::types::{Provider, ProviderLoginResult, ProviderLoginSummary};
 
 use windows::{
     clear_login_capture_flag, mark_login_capture_started, provider_cookie_urls,
@@ -37,7 +36,7 @@ use windows::{
 struct ProviderLoginEventPayload {
     account_id: String,
     provider: Provider,
-    result: ProviderLoginResult,
+    result: ProviderLoginSummary,
 }
 
 /// 迅雷二次验证完成事件负载：携带验证窗口 label（前端据此关闭窗口）与 CreditKey（自动继续登录）。
@@ -147,7 +146,7 @@ pub fn emit_provider_login_complete(
     app: &tauri::AppHandle,
     provider: Provider,
     account_id: String,
-    result: ProviderLoginResult,
+    result: ProviderLoginSummary,
 ) {
     let _ = app.emit(
         PROVIDER_LOGIN_EVENT,
@@ -174,57 +173,25 @@ pub fn watch_login_navigation(
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_millis(700)).await;
         match capture_provider_login(app.clone(), provider, account_id.clone()).await {
-            Ok(result) => emit_provider_login_complete(&app, provider, account_id, result),
+            Ok(result) => {
+                let summary = ProviderLoginSummary::from(&result);
+                match crate::db::save_login_result(
+                    &app,
+                    account_id.clone(),
+                    result.cookie,
+                    result.login_name,
+                )
+                .await
+                {
+                    Ok(()) => emit_provider_login_complete(&app, provider, account_id, summary),
+                    Err(error) => {
+                        tracing::error!(stage=%error.stage, code=error.code, "保存登录凭证失败")
+                    }
+                }
+            }
             Err(_) => clear_login_capture_flag(&label),
         }
     });
-}
-
-/// 打开夸克官方登录窗口。
-pub(crate) async fn open_quark_login_window(
-    app: tauri::AppHandle,
-    account_id: String,
-) -> Result<(), BackendClientError> {
-    let label = quark_login_window_label(&account_id);
-    let url = tauri::Url::parse(QUARK_LOGIN_URL)
-        .map_err(|error| backend_error("quark_login", -3, format!("夸克登录地址无效：{error}")))?;
-
-    if let Some(window) = app.get_webview_window(&label) {
-        window.navigate(url).map_err(|error| {
-            backend_error("quark_login", -7, format!("打开夸克登录页失败：{error}"))
-        })?;
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-        return Ok(());
-    }
-
-    tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::External(url))
-        .title(format!("夸克账号登录 - {account_id}"))
-        .inner_size(980.0, 720.0)
-        .center()
-        .incognito(true)
-        .build()
-        .map_err(|error| {
-            backend_error("quark_login", -7, format!("创建夸克登录窗口失败：{error}"))
-        })?;
-
-    Ok(())
-}
-
-/// 从夸克登录窗口采集 Cookie 并校验。
-pub(crate) async fn capture_quark_login_cookie(
-    app: tauri::AppHandle,
-    account_id: String,
-) -> Result<QuarkLoginResult, BackendClientError> {
-    let label = quark_login_window_label(&account_id);
-    let window = app
-        .get_webview_window(&label)
-        .ok_or_else(|| backend_error("quark_login", 1002, "请先打开夸克官方登录窗口"))?;
-
-    let result = capture_quark_login_from_window(&window)?;
-    let _ = window.close();
-    Ok(result)
 }
 
 /// 打开指定网盘的官方登录或授权窗口。

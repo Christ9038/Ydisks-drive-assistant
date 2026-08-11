@@ -29,7 +29,7 @@ export const safeParseJsonArray = <T,>(json: string): T[] => {
   }
 };
 
-/** 前端账号 → SQLite 账号行（cookie 映射为 credential）。 */
+/** 前端账号 → Rust 可编辑元数据；不包含 Cookie/Token。 */
 export const accountToRow = (account: ProviderAccount): RustAccountRow => ({
   id: account.id,
   provider: account.provider,
@@ -39,7 +39,7 @@ export const accountToRow = (account: ProviderAccount): RustAccountRow => ({
   purpose: account.purpose,
   lastChecked: account.lastChecked,
   pendingReason: account.pendingReason,
-  credential: account.cookie,
+  hasCredential: account.hasCredential,
 });
 
 /** SQLite 账号行 → 前端账号（补平台名）。 */
@@ -53,7 +53,7 @@ export const accountFromRow = (row: RustAccountRow): ProviderAccount => ({
   purpose: row.purpose,
   lastChecked: row.lastChecked,
   pendingReason: row.pendingReason,
-  cookie: row.credential,
+  hasCredential: row.hasCredential,
 });
 
 /** 运行中批次 → SQLite 批次行（items/logs/shortLinkTargets 序列化为 JSON）。 */

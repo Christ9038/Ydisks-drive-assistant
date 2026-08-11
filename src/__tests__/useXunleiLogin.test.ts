@@ -28,7 +28,7 @@ const xunleiAccount = (over: Partial<ProviderAccount> = {}): ProviderAccount => 
   loginName: '',
   purpose: '转存',
   lastChecked: '',
-  cookie: undefined,
+  hasCredential: false,
   ...over,
 });
 
@@ -44,7 +44,7 @@ beforeEach(() => {
   bridge.isTauriRuntime.mockReturnValue(false);
   bridge.startXunleiLogin.mockResolvedValue(qr);
   bridge.checkXunleiLogin.mockResolvedValue({ status: 'pending' });
-  bridge.loginXunleiPassword.mockResolvedValue({ cookie: 'ck', loginName: '雷用户', cookieCount: 3 });
+  bridge.loginXunleiPassword.mockResolvedValue({ hasCredential: true, loginName: '雷用户', cookieCount: 3 });
   bridge.openXunleiReviewWindow.mockResolvedValue(undefined);
   bridge.closeXunleiReviewWindow.mockResolvedValue(undefined);
   eventApi.listen.mockResolvedValue(vi.fn());
@@ -313,7 +313,7 @@ describe('useXunleiLogin - 扫码轮询', () => {
     await act(async () => {
       await result.current.openXunleiAuthorization(xunleiAccount());
     });
-    bridge.checkXunleiLogin.mockResolvedValue({ status: 'connected', result: { cookie: 'ck', loginName: '雷', cookieCount: 1 } });
+    bridge.checkXunleiLogin.mockResolvedValue({ status: 'connected', result: { hasCredential: true, loginName: '雷', cookieCount: 1 } });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
@@ -322,7 +322,7 @@ describe('useXunleiLogin - 扫码轮询', () => {
     expect(result.current.xunleiQrAccountId).toBeNull();
     const connUpdater = update.mock.calls[0][1];
     expect(connUpdater(xunleiAccount()).status).toBe('connected');
-    expect(connUpdater(xunleiAccount()).cookie).toBe('ck');
+    expect(connUpdater(xunleiAccount()).hasCredential).toBe(true);
   });
 
   it('轮询未连接则继续排队', async () => {
@@ -388,7 +388,7 @@ describe('useXunleiLogin - 扫码轮询', () => {
     });
     unmount();
     await act(async () => {
-      resolveCheck({ status: 'connected', result: { cookie: 'ck', loginName: '雷', cookieCount: 1 } });
+      resolveCheck({ status: 'connected', result: { hasCredential: true, loginName: '雷', cookieCount: 1 } });
     });
     // stopped 后提前返回，不写回账号
     expect(update).not.toHaveBeenCalled();
@@ -453,7 +453,7 @@ describe('useXunleiLogin - 二次验证完成监听', () => {
       await result.current.submitXunleiPasswordLogin();
     });
     expect(result.current.xunleiReviewUrl).toBe('https://rev');
-    bridge.loginXunleiPassword.mockResolvedValue({ cookie: 'ck2', loginName: '雷2', cookieCount: 1 });
+    bridge.loginXunleiPassword.mockResolvedValue({ hasCredential: true, loginName: '雷2', cookieCount: 1 });
     const handler = eventApi.listen.mock.calls[eventApi.listen.mock.calls.length - 1][1];
     await act(async () => {
       await handler({ payload: { windowLabel: 'l', creditKey: 'ck-new' } });
@@ -485,7 +485,7 @@ describe('useXunleiLogin - 二次验证完成监听', () => {
     act(() => result.current.setXunleiPassword('p2'));
     // 之前 submitXunleiPasswordLogin 已调用过一次 loginXunleiPassword（review 失败），清掉以隔离续登调用
     bridge.loginXunleiPassword.mockClear();
-    bridge.loginXunleiPassword.mockResolvedValue({ cookie: 'ck2', loginName: '雷2', cookieCount: 1 });
+    bridge.loginXunleiPassword.mockResolvedValue({ hasCredential: true, loginName: '雷2', cookieCount: 1 });
     const handler = eventApi.listen.mock.calls[eventApi.listen.mock.calls.length - 1][1];
     await act(async () => {
       await handler({ payload: { windowLabel: 'l', creditKey: 'ck-new' } });

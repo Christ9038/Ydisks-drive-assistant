@@ -182,6 +182,25 @@ pub struct ProviderLoginResult {
     pub cookie_count: usize,
 }
 
+/// 返回给前端的登录结果，不包含 Cookie/Token。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderLoginSummary {
+    pub login_name: String,
+    pub cookie_count: usize,
+    pub has_credential: bool,
+}
+
+impl From<&ProviderLoginResult> for ProviderLoginSummary {
+    fn from(result: &ProviderLoginResult) -> Self {
+        Self {
+            login_name: result.login_name.clone(),
+            cookie_count: result.cookie_count,
+            has_credential: !result.cookie.trim().is_empty(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct XunleiLoginQrResult {
@@ -196,6 +215,14 @@ pub struct XunleiLoginQrResult {
 pub struct XunleiLoginCheckResult {
     pub status: String,
     pub result: Option<ProviderLoginResult>,
+}
+
+/// 返回给前端的迅雷轮询结果，凭证只在 Rust 内部持久化。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XunleiLoginCheckSummary {
+    pub status: String,
+    pub result: Option<ProviderLoginSummary>,
 }
 
 /// 通用网盘转存结果。

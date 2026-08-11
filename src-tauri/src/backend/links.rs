@@ -43,6 +43,55 @@ pub fn build_short_link_payloads(
         .collect()
 }
 
+pub async fn create_original_link(
+    api_key: &str,
+    account_id: &str,
+    title: &str,
+    share_url: &str,
+) -> Result<String, BackendClientError> {
+    if api_key.trim().is_empty() {
+        return Err(backend_error("auth", 1001, "请先填写 API Key"));
+    }
+    if account_id.trim().is_empty() {
+        return Err(backend_error("original_link", -3, "缺少 Ydisks 后台账号"));
+    }
+    let data = post_backend_json(
+        api_key,
+        &format!("/api/v1/assets/accounts/{account_id}/original-links"),
+        &build_original_link_payload(title, share_url),
+        "original_link",
+    )
+    .await?;
+    data.get("id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| backend_error("original_link", -4, "后台未返回原始链接结果"))
+}
+
+pub async fn create_short_link(
+    api_key: &str,
+    title: &str,
+    original_link_id: &str,
+    target: &BackendShortLinkTarget,
+) -> Result<BackendShortLinkResult, BackendClientError> {
+    let payload = build_short_link_payloads(title, original_link_id, std::slice::from_ref(target))
+        .into_iter()
+        .next()
+        .expect("single target creates one payload");
+    let data = post_backend_json(api_key, "/api/v1/assets/links", &payload, "short_link").await?;
+    let short_url = data
+        .get("short_url")
+        .and_then(Value::as_str)
+        .ok_or_else(|| backend_error("short_link", -4, "后台未返回短链 URL"))?
+        .to_string();
+    Ok(BackendShortLinkResult {
+        channel_id: target.channel_id.clone(),
+        channel_name: target.channel_name.clone(),
+        domain: target.domain.clone(),
+        short_url,
+    })
+}
+
 /// 串行调用后台：先创建原始链接；若选择了渠道，再按目标渠道逐个创建短链。
 pub async fn create_backend_links(
     api_key: &str,
@@ -58,19 +107,7 @@ pub async fn create_backend_links(
         return Err(backend_error("original_link", -3, "缺少 Ydisks 后台账号"));
     }
 
-    let original_payload = build_original_link_payload(title, share_url);
-    let original_data = post_backend_json(
-        api_key,
-        &format!("/api/v1/assets/accounts/{account_id}/original-links"),
-        &original_payload,
-        "original_link",
-    )
-    .await?;
-    let original_link_id = original_data
-        .get("id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| backend_error("original_link", -4, "后台未返回原始链接结果"))?
-        .to_string();
+    let original_link_id = create_original_link(api_key, account_id, title, share_url).await?;
 
     if targets.is_empty() {
         return Ok(BackendCreationResult {

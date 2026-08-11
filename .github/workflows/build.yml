@@ -81,6 +81,16 @@ jobs:
         with:
           args: ${{ matrix.args }}
 
+      # macOS 26 读取 Icon Composer 编译出的 Assets.car；该文件在本地生成并随仓库提交，CI 只负责打包和校验。
+      - name: Verify Icon Composer asset (macOS only)
+        if: matrix.rustTarget != ''
+        shell: bash
+        run: |
+          APP="src-tauri/target/${{ matrix.rustTarget }}/release/bundle/macos/Ydisks批量转存助手.app"
+          test -s "$APP/Contents/Resources/Assets.car"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP/Contents/Info.plist")" = "AppIcon"
+          echo "Verified Icon Composer Assets.car and CFBundleIconName=AppIcon"
+
       # macOS：把双击修复脚本注入到每个 DMG 根目录（Tauri 无内置配置支持，
       # 用 hdiutil 转读写->注入->转回压缩只读）。仅 macOS 矩阵运行。
       - name: Inject unblock script into DMG (macOS only)

@@ -25,7 +25,7 @@ const quarkAccount = (overrides: Partial<ProviderAccount> = {}): ProviderAccount
   loginName: 'user1',
   purpose: '转存',
   lastChecked: '2024-01-01 00:00',
-  cookie: 'ck',
+  hasCredential: true,
   ...overrides,
 });
 
@@ -91,7 +91,7 @@ describe('TasksPage', () => {
   });
 
   it('无可用账号时下拉显示占位且提交禁用', () => {
-    render(<TasksPage {...baseProps({ accounts: [quarkAccount({ status: 'expired', cookie: undefined })] })} />);
+    render(<TasksPage {...baseProps({ accounts: [quarkAccount({ status: 'expired', hasCredential: false })] })} />);
     expect(screen.getByText('无可用账号')).toBeTruthy();
     expect((screen.getByRole('button', { name: /创建任务并执行/ }) as HTMLButtonElement).disabled).toBe(true);
   });
@@ -325,7 +325,7 @@ describe('TasksPage', () => {
 
   it('切换到百度后，后台账号自动切到百度推广账号', () => {
     render(<TasksPage {...baseProps({
-      accounts: [quarkAccount(), quarkAccount({ id: 'b1', provider: 'baidu', platformName: '百度网盘', displayName: '百度账号1', cookie: 'bk' })],
+      accounts: [quarkAccount(), quarkAccount({ id: 'b1', provider: 'baidu', platformName: '百度网盘', displayName: '百度账号1', hasCredential: true })],
       ydisksAccounts: [
         ydisksAccount({ id: 'yq', name: '夸克推广', accountTypeName: '夸克网盘' }),
         ydisksAccount({ id: 'yb', name: '百度推广', accountTypeName: '百度网盘' }),

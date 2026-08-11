@@ -13,20 +13,22 @@ import {
 import type { BatchDraft, BatchRecord } from '../types';
 import type { ImportItem, QueueItem, ShortLinkTarget } from '../../types';
 
+const uuidV7Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
 describe('工厂函数（结构断言）', () => {
   it('createProviderAccount 生成未登录账号', () => {
     const acc = createProviderAccount('quark', '主');
     expect(acc.provider).toBe('quark');
     expect(acc.platformName).toBe('夸克网盘');
     expect(acc.status).toBe('expired');
-    expect(acc.id).toContain('quark-');
+    expect(acc.id).toMatch(uuidV7Pattern);
   });
   it('buildImportItem 复制资源字段并标记 valid', () => {
     const item = buildImportItem({ title: '课程', sourceUrl: 'https://pan.quark.cn/s/a', provider: 'quark' }, 'acc-1', 0);
     expect(item.title).toBe('课程');
     expect(item.accountId).toBe('acc-1');
     expect(item.valid).toBe(true);
-    expect(item.id).toContain('I-');
+    expect(item.id).toMatch(uuidV7Pattern);
   });
   it('formatNow 形如 YYYY-MM-DD HH:mm', () => {
     expect(formatNow()).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
@@ -35,10 +37,10 @@ describe('工厂函数（结构断言）', () => {
     const log = createBatchLog('info', '开始');
     expect(log.tone).toBe('info');
     expect(log.message).toBe('开始');
-    expect(log.id).toContain('L-');
+    expect(log.id).toMatch(uuidV7Pattern);
   });
-  it('generateBatchId 形如 B-YYYYMMDD-HHMMSS', () => {
-    expect(generateBatchId()).toMatch(/^B-\d{8}-\d{6}$/);
+  it('generateBatchId 生成 UUIDv7', () => {
+    expect(generateBatchId()).toMatch(uuidV7Pattern);
   });
 });
 

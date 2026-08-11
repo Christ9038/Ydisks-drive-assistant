@@ -17,17 +17,27 @@ import {
   loginXunleiPassword,
   captureProviderLogin,
   checkProviderLogin,
+  saveProviderCredential,
   listProviderAccountsFromDb,
   upsertProviderAccountToDb,
   deleteProviderAccountFromDb,
+  clearProviderCredentialInDb,
+  loadBusinessSettings,
+  saveTransferIntervals,
+  configureBackendApiKey,
+  clearBackendApiKey,
+  importLegacyBusinessSettings,
   importLegacyAccountsToDb,
   saveBatchToDb,
   loadBatchesFromDb,
   deleteBatchFromDb,
   saveHistoryToDb,
+  archiveBatchInDb,
   loadHistoryFromDb,
   parseImport,
   createBackendLinks,
+  createBackendOriginalLink,
+  createBackendShortLink,
   loadBackendAssets,
   loadBackendQuota,
   openLogDir,
@@ -46,7 +56,7 @@ const account: ProviderAccount = {
   loginName: 'user',
   purpose: '',
   lastChecked: '-',
-  cookie: 'cookie-val',
+  hasCredential: true,
 };
 
 const item = (over: Partial<QueueItem> = {}): QueueItem => ({
@@ -141,20 +151,20 @@ describe('transferProviderShare', () => {
     await expect(transferProviderShare({ account, item: item(), targetFolderRef: 'r' }))
       .rejects.toThrow('请在桌面端运行后执行转存');
   });
-  it('桌面端成功返回结果并带上 credential', async () => {
+  it('桌面端只传 accountId，不把 credential 带回前端', async () => {
     setRuntime(true);
     const result = { shareUrl: 'https://pan.quark.cn/s/new', transferred: true };
     vi.mocked(invoke).mockResolvedValueOnce(result);
     await expect(transferProviderShare({ account, item: item(), targetFolderRef: 'r' })).resolves.toEqual(result);
-    expect(invoke).toHaveBeenCalledWith('transfer_share_command', expect.objectContaining({
-      provider: 'quark', credential: 'cookie-val', sourceUrl: 'https://pan.quark.cn/s/a', targetFolderRef: 'r', title: '课程',
-    }));
+    expect(invoke).toHaveBeenCalledWith('transfer_share_command', {
+      accountId: 'quark-1', sourceUrl: 'https://pan.quark.cn/s/a', targetFolderRef: 'r', title: '课程',
+    });
   });
-  it('account 缺失时 credential 为空串', async () => {
+  it('account 缺失时 accountId 为空串', async () => {
     setRuntime(true);
     vi.mocked(invoke).mockResolvedValueOnce({ shareUrl: 'u', transferred: true });
     await transferProviderShare({ account: undefined, item: item(), targetFolderRef: 'r' });
-    expect(invoke).toHaveBeenCalledWith('transfer_share_command', expect.objectContaining({ credential: '' }));
+    expect(invoke).toHaveBeenCalledWith('transfer_share_command', expect.objectContaining({ accountId: '' }));
   });
   it('桌面端 invoke 抛错时经 formatBackendError 归一化', async () => {
     setRuntime(true);
@@ -176,7 +186,7 @@ describe('transferProviderShare', () => {
 describe('listProviderFolders', () => {
   it('缺少登录态拒绝', async () => {
     setRuntime(true);
-    await expect(listProviderFolders({ account: { ...account, cookie: undefined }, folderRef: 'r', provider: 'quark' }))
+    await expect(listProviderFolders({ account: { ...account, hasCredential: false }, folderRef: 'r', provider: 'quark' }))
       .rejects.toThrow('夸克账号缺少登录态，请重新登录');
   });
   it('非桌面端拒绝', async () => {
@@ -188,7 +198,7 @@ describe('listProviderFolders', () => {
     const folders = [{ ref: 'fid:1', name: '目录1' }];
     vi.mocked(invoke).mockResolvedValueOnce(folders);
     await expect(listProviderFolders({ account, folderRef: 'r', provider: 'quark' })).resolves.toEqual(folders);
-    expect(invoke).toHaveBeenCalledWith('list_provider_folders_command', expect.objectContaining({ provider: 'quark', credential: 'cookie-val', folderRef: 'r' }));
+    expect(invoke).toHaveBeenCalledWith('list_provider_folders_command', { accountId: 'quark-1', folderRef: 'r' });
   });
   it('invoke 抛错时归一化', async () => {
     setRuntime(true);
@@ -251,7 +261,7 @@ describe('登录捕获', () => {
   });
   it('loginXunleiPassword 桌面端返回登录结果', async () => {
     setRuntime(true);
-    vi.mocked(invoke).mockResolvedValueOnce({ success: true, cookie: 'c' });
+    vi.mocked(invoke).mockResolvedValueOnce({ success: true, hasCredential: true });
     await loginXunleiPassword(account, 'u', 'p', 'ck');
     expect(invoke).toHaveBeenCalledWith('login_xunlei_password_command', { accountId: 'quark-1', username: 'u', password: 'p', creditKey: 'ck' });
   });
@@ -260,26 +270,65 @@ describe('登录捕获', () => {
   });
   it('captureProviderLogin 桌面端返回结果', async () => {
     setRuntime(true);
-    vi.mocked(invoke).mockResolvedValueOnce({ success: true, cookie: 'c' });
+    vi.mocked(invoke).mockResolvedValueOnce({ success: true, hasCredential: true });
     await captureProviderLogin(account);
     expect(invoke).toHaveBeenCalledWith('capture_provider_login_command', { provider: 'quark', accountId: 'quark-1' });
   });
   it('checkProviderLogin 缺少登录态拒绝', async () => {
     setRuntime(true);
-    await expect(checkProviderLogin({ ...account, cookie: undefined })).rejects.toThrow('夸克账号缺少登录态，请重新登录');
+    await expect(checkProviderLogin({ ...account, hasCredential: false })).rejects.toThrow('夸克账号缺少登录态，请重新登录');
   });
   it('checkProviderLogin 非桌面端拒绝', async () => {
     await expect(checkProviderLogin(account)).rejects.toThrow('请在桌面端运行后检测登录态');
   });
   it('checkProviderLogin 桌面端返回结果', async () => {
     setRuntime(true);
-    vi.mocked(invoke).mockResolvedValueOnce({ success: true, cookie: 'c' });
+    vi.mocked(invoke).mockResolvedValueOnce({ success: true, hasCredential: true });
     await checkProviderLogin(account);
-    expect(invoke).toHaveBeenCalledWith('check_provider_login_command', { provider: 'quark', credential: 'cookie-val' });
+    expect(invoke).toHaveBeenCalledWith('check_provider_login_command', { accountId: 'quark-1' });
   });
 });
 
 describe('账号 / 批次 / 历史持久化', () => {
+  it('手动凭证只提交给 Rust 并返回脱敏结果', async () => {
+    setRuntime(true);
+    vi.mocked(invoke).mockResolvedValueOnce({ loginName: 'u', cookieCount: 2, hasCredential: true });
+    await expect(saveProviderCredential('q1', 'secret')).resolves.toEqual(expect.objectContaining({ hasCredential: true }));
+    expect(invoke).toHaveBeenCalledWith('save_provider_credential_command', { accountId: 'q1', credential: 'secret' });
+  });
+
+  it('清理账号凭证调用 Rust', async () => {
+    setRuntime(true);
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    await clearProviderCredentialInDb('q1');
+    expect(invoke).toHaveBeenCalledWith('clear_provider_credential_command', { id: 'q1' });
+  });
+
+  it('业务设置全部通过 Rust 读写', async () => {
+    setRuntime(true);
+    const settings = { transferIntervals: { quark: 4, baidu: 5, xunlei: 6 }, hasApiKey: true };
+    vi.mocked(invoke).mockResolvedValueOnce(settings);
+    await expect(loadBusinessSettings()).resolves.toEqual(settings);
+    expect(invoke).toHaveBeenLastCalledWith('get_business_settings_command');
+    vi.mocked(invoke).mockResolvedValueOnce(settings.transferIntervals);
+    await saveTransferIntervals(settings.transferIntervals);
+    expect(invoke).toHaveBeenLastCalledWith('set_transfer_intervals_command', { intervals: settings.transferIntervals });
+  });
+
+  it('API Key 配置/清除及旧配置迁移均调用 Rust', async () => {
+    setRuntime(true);
+    vi.mocked(invoke).mockResolvedValueOnce({ maxLinks: 1, usedLinks: 0, remainingLinks: 1, shortlinkAccessStatus: 'ACTIVE' });
+    await configureBackendApiKey('secret');
+    expect(invoke).toHaveBeenLastCalledWith('configure_backend_api_key_command', { apiKey: 'secret' });
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    await clearBackendApiKey();
+    expect(invoke).toHaveBeenLastCalledWith('clear_backend_api_key_command');
+    vi.mocked(invoke).mockResolvedValueOnce({ transferIntervals: { quark: 3, baidu: 4, xunlei: 4 }, hasApiKey: true });
+    await importLegacyBusinessSettings('old', { quark: 1, baidu: 4, xunlei: 4 });
+    expect(invoke).toHaveBeenLastCalledWith('import_legacy_business_settings_command', {
+      apiKey: 'old', intervals: { quark: 1, baidu: 4, xunlei: 4 },
+    });
+  });
   it('listProviderAccountsFromDb 非桌面端返回空', async () => {
     await expect(listProviderAccountsFromDb()).resolves.toEqual([]);
     expect(invoke).not.toHaveBeenCalled();
@@ -290,7 +339,7 @@ describe('账号 / 批次 / 历史持久化', () => {
     const result = await listProviderAccountsFromDb();
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('quark-1');
-    expect(result[0].cookie).toBe('cookie-val');
+    expect(result[0].hasCredential).toBe(true);
   });
   it('listProviderAccountsFromDb invoke 抛错时归一化', async () => {
     setRuntime(true);
@@ -447,64 +496,110 @@ describe('parseImport', () => {
 describe('后台 API', () => {
   it('createBackendLinks 成功并转换 targets', async () => {
     vi.mocked(invoke).mockResolvedValueOnce({ originalUrl: 'o', shortLinks: [] });
-    await createBackendLinks({ apiKey: 'sk', item: item({ shareUrl: 'https://pan.quark.cn/s/mine' }), targets, ydisksAccountId: 'y-1' });
+    await createBackendLinks({ item: item({ shareUrl: 'https://pan.quark.cn/s/mine' }), targets, ydisksAccountId: 'y-1' });
     expect(invoke).toHaveBeenCalledWith('create_backend_links_command', expect.objectContaining({
-      apiKey: 'sk', accountId: 'y-1', title: '课程', shareUrl: 'https://pan.quark.cn/s/mine',
+      accountId: 'y-1', title: '课程', shareUrl: 'https://pan.quark.cn/s/mine',
       targets: [{ accountId: 'y-1', channelId: 'ch1', channelName: 'Q群', domain: 'ydisks.com' }],
     }));
   });
   it('createBackendLinks 无 shareUrl 时回落 sourceUrl', async () => {
     vi.mocked(invoke).mockResolvedValueOnce({ originalUrl: 'o', shortLinks: [] });
-    await createBackendLinks({ apiKey: 'sk', item: item(), targets, ydisksAccountId: 'y-1' });
+    await createBackendLinks({ item: item(), targets, ydisksAccountId: 'y-1' });
     expect(invoke).toHaveBeenCalledWith('create_backend_links_command', expect.objectContaining({ shareUrl: 'https://pan.quark.cn/s/a' }));
   });
   it('createBackendLinks invoke 抛错时归一化', async () => {
     setRuntime(true);
     vi.mocked(invoke).mockRejectedValueOnce({ stage: 'backend', message: '失败' });
-    await expect(createBackendLinks({ apiKey: 'sk', item: item(), targets, ydisksAccountId: 'y-1' })).rejects.toThrow('backend: 失败');
+    await expect(createBackendLinks({ item: item(), targets, ydisksAccountId: 'y-1' })).rejects.toThrow('backend: 失败');
   });
   it('createBackendLinks invoke 抛错且运行时丢失时回落桌面端提示', async () => {
     vi.mocked(invoke).mockImplementationOnce(async () => {
       setRuntime(false);
       throw new Error('boom');
     });
-    await expect(createBackendLinks({ apiKey: 'sk', item: item(), targets, ydisksAccountId: 'y-1' })).rejects.toThrow('请在桌面端运行后创建后台链接');
+    await expect(createBackendLinks({ item: item(), targets, ydisksAccountId: 'y-1' })).rejects.toThrow('请在桌面端运行后创建后台链接');
   });
   it('loadBackendAssets 成功', async () => {
     const snapshot = { quota: { maxLinks: 1, usedLinks: 0, remainingLinks: 1, shortlinkAccessStatus: 'ACTIVE' }, accounts: [], channels: [], domains: [] };
     vi.mocked(invoke).mockResolvedValueOnce(snapshot);
-    await expect(loadBackendAssets('sk')).resolves.toEqual(snapshot);
-    expect(invoke).toHaveBeenCalledWith('fetch_backend_assets_command', { apiKey: 'sk' });
+    await expect(loadBackendAssets()).resolves.toEqual(snapshot);
+    expect(invoke).toHaveBeenCalledWith('fetch_backend_assets_command');
   });
   it('loadBackendAssets invoke 抛错时归一化', async () => {
     setRuntime(true);
     vi.mocked(invoke).mockRejectedValueOnce({ stage: 'backend', message: 'x' });
-    await expect(loadBackendAssets('sk')).rejects.toThrow('backend: x');
+    await expect(loadBackendAssets()).rejects.toThrow('backend: x');
   });
   it('loadBackendAssets invoke 抛错且运行时丢失时回落桌面端提示', async () => {
     vi.mocked(invoke).mockImplementationOnce(async () => {
       setRuntime(false);
       throw new Error('boom');
     });
-    await expect(loadBackendAssets('sk')).rejects.toThrow('请在桌面端运行后连接后台');
+    await expect(loadBackendAssets()).rejects.toThrow('请在桌面端运行后连接后台');
   });
   it('loadBackendQuota 成功', async () => {
     const quota = { maxLinks: 100, usedLinks: 1, remainingLinks: 99, shortlinkAccessStatus: 'ACTIVE' };
     vi.mocked(invoke).mockResolvedValueOnce(quota);
-    await expect(loadBackendQuota('sk')).resolves.toEqual(quota);
-    expect(invoke).toHaveBeenCalledWith('fetch_backend_quota_command', { apiKey: 'sk' });
+    await expect(loadBackendQuota()).resolves.toEqual(quota);
+    expect(invoke).toHaveBeenCalledWith('fetch_backend_quota_command');
   });
   it('loadBackendQuota invoke 抛错时归一化', async () => {
     setRuntime(true);
     vi.mocked(invoke).mockRejectedValueOnce({ stage: 'backend', message: 'x' });
-    await expect(loadBackendQuota('sk')).rejects.toThrow('backend: x');
+    await expect(loadBackendQuota()).rejects.toThrow('backend: x');
   });
   it('loadBackendQuota invoke 抛错且运行时丢失时回落桌面端提示', async () => {
     vi.mocked(invoke).mockImplementationOnce(async () => {
       setRuntime(false);
       throw new Error('boom');
     });
-    await expect(loadBackendQuota('sk')).rejects.toThrow('请在桌面端运行后连接后台');
+    await expect(loadBackendQuota()).rejects.toThrow('请在桌面端运行后连接后台');
+  });
+});
+
+describe('分阶段建链与原子归档桥接', () => {
+  const target: ShortLinkTarget = { id: 'c1', channelId: 'c1', channelName: '渠道', domain: 'd.com', ydisksAccountId: 'y1', ydisksAccountName: 'Y', enabled: true };
+
+  it('archiveBatchInDb 桌面端传递完整历史行', async () => {
+    setRuntime(true);
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    await archiveBatchInDb('B-1', historyRecord);
+    expect(invoke).toHaveBeenCalledWith('archive_batch_command', { batchId: 'B-1', history: historyToRow(historyRecord) });
+  });
+  it('archiveBatchInDb 非桌面端不调用 invoke', async () => {
+    await archiveBatchInDb('B-1', historyRecord);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+  it('archiveBatchInDb 归一化错误', async () => {
+    setRuntime(true);
+    vi.mocked(invoke).mockRejectedValueOnce({ stage: 'db', message: '归档失败' });
+    await expect(archiveBatchInDb('B-1', historyRecord)).rejects.toThrow('db: 归档失败');
+  });
+  it('createBackendOriginalLink 使用转存后的 shareUrl', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce('orig-1');
+    await expect(createBackendOriginalLink(item({ shareUrl: 'https://share' }), 'y1')).resolves.toBe('orig-1');
+    expect(invoke).toHaveBeenCalledWith('create_original_link_command', { accountId: 'y1', title: '课程', shareUrl: 'https://share' });
+  });
+  it('createBackendOriginalLink 归一化错误', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce({ stage: 'original_link', message: '失败' });
+    await expect(createBackendOriginalLink(item(), 'y1')).rejects.toThrow('original_link: 失败');
+  });
+  it('createBackendShortLink 精确映射单个目标', async () => {
+    const response = { channelId: 'c1', channelName: '渠道', domain: 'd.com', shortUrl: 'https://d.com/a' };
+    vi.mocked(invoke).mockResolvedValueOnce(response);
+    await expect(createBackendShortLink(item({ originalLinkId: 'orig-1' }), target)).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledWith('create_short_link_command', {
+      title: '课程', originalLinkId: 'orig-1',
+      target: { accountId: 'y1', channelId: 'c1', channelName: '渠道', domain: 'd.com' },
+    });
+  });
+  it('createBackendShortLink 缺少 originalLinkId 时拒绝且不调用 invoke', async () => {
+    await expect(createBackendShortLink(item(), target)).rejects.toThrow('缺少后台原始链接 ID');
+    expect(invoke).not.toHaveBeenCalled();
+  });
+  it('createBackendShortLink 归一化错误', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce({ stage: 'short_link', message: '失败' });
+    await expect(createBackendShortLink(item({ originalLinkId: 'orig-1' }), target)).rejects.toThrow('short_link: 失败');
   });
 });
 

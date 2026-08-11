@@ -1,24 +1,24 @@
 //! 后台连接域：API Key、连接状态、额度、后台资产（账号 / 渠道 / 域名 / 短链目标）。
 //!
 //! 持有 7 个状态并提供「检测连接」「立即清除 Key」两个处理。检测成功后自动拉取后台资产；
-//! 启动时若本地已保存 Key 则自动重新检测以恢复连接。Toast 反馈由调用方注入的 `setToast` 上报。
+//! 启动时从 Rust 读取脱敏配置并自动恢复连接。API Key 原值不会进入 React 状态。
 
 import { useEffect, useRef, useState } from 'react';
 
 import {
   loadBackendAssets,
   loadBackendQuota,
+  loadBusinessSettings,
+  configureBackendApiKey,
+  clearBackendApiKey,
+  importLegacyBusinessSettings,
   isTauriRuntime,
   waitForNextPaint,
 } from '../lib/bridge';
 import { formatBackendError } from '../lib/format';
 import { buildTargetsFromBackendAssets } from '../lib/mappers';
 import { emptyQuota } from '../lib/constants';
-import {
-  clearStoredApiKey,
-  loadStoredApiKey,
-  saveStoredApiKey,
-} from '../lib/storage';
+import { clearLegacyBusinessSettings, loadLegacyBusinessSettings } from '../lib/storage';
 import type { ToastState } from './useToast';
 import type {
   DomainOption,
@@ -33,6 +33,7 @@ export type ApiConnectionStatus = 'idle' | 'checking' | 'connected' | 'failed';
 /** 后台连接域 hook 返回值。 */
 export interface ApiConnection {
   apiKey: string;
+  hasApiKey: boolean;
   apiConnectionStatus: ApiConnectionStatus;
   apiError: string;
   quotaState: QuotaState;
@@ -41,7 +42,7 @@ export interface ApiConnection {
   shortlinkOptions: ShortLinkTarget[];
   detectApiKey: () => Promise<void>;
   setApiKeyDraft: (nextApiKey: string) => void;
-  clearApiKeyImmediately: () => void;
+  clearApiKeyImmediately: () => Promise<void>;
   /** 本地乐观扣减短链用量（`usedLinks += count`），用于创建短链成功后即时刷新余额显示。 */
   deductQuotaLocally: (count: number) => void;
   /** 从后台重新拉取额度并覆盖本地状态（用于一批转存结束后与线上同步）。 */
@@ -54,16 +55,17 @@ export interface ApiConnection {
  * @param setToast Toast 反馈回调（由 toast 域注入）
  */
 export function useApiConnection(setToast: (toast: ToastState | null) => void): ApiConnection {
-  const [apiKey, setApiKey] = useState(loadStoredApiKey);
-  const [apiConnectionStatus, setApiConnectionStatus] = useState<ApiConnectionStatus>(loadStoredApiKey().trim() ? 'idle' : 'failed');
+  const [apiKey, setApiKey] = useState('');
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [apiConnectionStatus, setApiConnectionStatus] = useState<ApiConnectionStatus>('failed');
   const [apiError, setApiError] = useState('');
   const [quotaState, setQuotaState] = useState<QuotaState>(emptyQuota);
   const [ydisksAccounts, setYdisksAccounts] = useState<YdisksAccountOption[]>([]);
   const [domainOptions, setDomainOptions] = useState<DomainOption[]>([]);
   const [shortlinkOptions, setShortlinkOptions] = useState<ShortLinkTarget[]>([]);
 
-  const loadBackendAssetsSilently = (nextApiKey: string) => {
-    void loadBackendAssets(nextApiKey)
+  const loadBackendAssetsSilently = () => {
+    void loadBackendAssets()
       .then((assets) => {
         setYdisksAccounts(assets.accounts);
         setDomainOptions(assets.domains);
@@ -78,7 +80,7 @@ export function useApiConnection(setToast: (toast: ToastState | null) => void): 
 
   const detectApiKey = async () => {
     const nextApiKey = apiKey.trim();
-    if (!nextApiKey) {
+    if (!nextApiKey && !hasApiKey) {
       setApiConnectionStatus('failed');
       setApiError('');
       return;
@@ -89,9 +91,9 @@ export function useApiConnection(setToast: (toast: ToastState | null) => void): 
     setToast({ message: '正在检测后台连接...', tone: 'info' });
     await waitForNextPaint();
     try {
-      const quota = await loadBackendQuota(nextApiKey);
-      setApiKey(nextApiKey);
-      saveStoredApiKey(nextApiKey);
+      const quota = nextApiKey ? await configureBackendApiKey(nextApiKey) : await loadBackendQuota();
+      setApiKey('');
+      setHasApiKey(true);
       setApiConnectionStatus('connected');
       setApiError('');
       setQuotaState({
@@ -100,7 +102,7 @@ export function useApiConnection(setToast: (toast: ToastState | null) => void): 
         shortlinkAccessStatus: quota.shortlinkAccessStatus,
       });
       setToast({ message: `后台已连接，剩余短链 ${quota.remainingLinks}`, tone: 'success' });
-      loadBackendAssetsSilently(nextApiKey);
+      loadBackendAssetsSilently();
     } catch (error) {
       const message = formatBackendError(error);
       setApiConnectionStatus('failed');
@@ -109,9 +111,10 @@ export function useApiConnection(setToast: (toast: ToastState | null) => void): 
     }
   };
 
-  const clearApiKeyImmediately = () => {
-    clearStoredApiKey();
+  const clearApiKeyImmediately = async () => {
+    await clearBackendApiKey();
     setApiKey('');
+    setHasApiKey(false);
     setApiConnectionStatus('failed');
     setApiError('');
   };
@@ -145,12 +148,11 @@ export function useApiConnection(setToast: (toast: ToastState | null) => void): 
    * 失败时静默（保留本地乐观值），避免打扰用户；调用方负责 toast 反馈。
    */
   const syncQuotaFromBackend = async () => {
-    const key = apiKey.trim();
-    if (!key) {
+    if (!hasApiKey) {
       return;
     }
     try {
-      const quota = await loadBackendQuota(key);
+      const quota = await loadBackendQuota();
       setQuotaState({
         maxLinks: quota.maxLinks,
         usedLinks: quota.usedLinks,
@@ -161,23 +163,46 @@ export function useApiConnection(setToast: (toast: ToastState | null) => void): 
     }
   };
 
-  // 启动时若本地已保存 API Key（且检测通过过），自动重新检测以恢复连接。
+  // 启动时只读取 Rust 返回的脱敏配置；API Key 原值不会进入前端。
   const autoDetectApiKeyRef = useRef(false);
   useEffect(() => {
     if (autoDetectApiKeyRef.current) {
       return;
     }
     autoDetectApiKeyRef.current = true;
-    const savedKey = loadStoredApiKey().trim();
-    if (!savedKey || !isTauriRuntime()) {
+    if (!isTauriRuntime()) {
       return;
     }
-    void detectApiKey();
+    const legacy = loadLegacyBusinessSettings();
+    const settingsPromise = legacy.apiKey || legacy.transferIntervals
+      ? importLegacyBusinessSettings(legacy.apiKey, legacy.transferIntervals).then((settings) => {
+          clearLegacyBusinessSettings();
+          return settings;
+        })
+      : loadBusinessSettings();
+    void settingsPromise.then(async (settings) => {
+      setHasApiKey(settings.hasApiKey);
+      if (!settings.hasApiKey) return;
+      setApiConnectionStatus('checking');
+      try {
+        const quota = await loadBackendQuota();
+        setQuotaState({ maxLinks: quota.maxLinks, usedLinks: quota.usedLinks, shortlinkAccessStatus: quota.shortlinkAccessStatus });
+        setApiConnectionStatus('connected');
+        loadBackendAssetsSilently();
+      } catch (error) {
+        setApiConnectionStatus('failed');
+        setApiError(formatBackendError(error));
+      }
+    }).catch((error) => {
+      setApiConnectionStatus('failed');
+      setApiError(formatBackendError(error));
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return {
     apiKey,
+    hasApiKey,
     apiConnectionStatus,
     apiError,
     quotaState,

@@ -1,29 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, render, act, waitFor } from '@testing-library/react';
-import { StrictMode, createElement } from 'react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 
 vi.mock('../lib/bridge', () => ({
   loadBackendAssets: vi.fn(),
   loadBackendQuota: vi.fn(),
+  loadBusinessSettings: vi.fn(),
+  importLegacyBusinessSettings: vi.fn(),
+  configureBackendApiKey: vi.fn(),
+  clearBackendApiKey: vi.fn(),
   isTauriRuntime: vi.fn(() => false),
   waitForNextPaint: vi.fn().mockResolvedValue(undefined),
 }));
 
-const storageApi = vi.hoisted(() => ({
-  loadStoredApiKey: vi.fn(() => ''),
-  saveStoredApiKey: vi.fn(),
-  clearStoredApiKey: vi.fn(),
-}));
-vi.mock('../lib/storage', () => storageApi);
-
-import { loadBackendAssets, loadBackendQuota, isTauriRuntime } from '../lib/bridge';
-import { loadStoredApiKey, saveStoredApiKey, clearStoredApiKey } from '../lib/storage';
+import {
+  clearBackendApiKey,
+  configureBackendApiKey,
+  isTauriRuntime,
+  loadBackendAssets,
+  loadBackendQuota,
+  loadBusinessSettings,
+  importLegacyBusinessSettings,
+} from '../lib/bridge';
 import { useApiConnection } from '../hooks/useApiConnection';
 import type { ToastState } from '../hooks/useToast';
-import type { RustBackendAssetsSnapshot } from '../lib/types';
 
-const assets: RustBackendAssetsSnapshot = {
-  quota: { maxLinks: 100, usedLinks: 1, remainingLinks: 99, shortlinkAccessStatus: 'ACTIVE' },
+const quota = { maxLinks: 100, usedLinks: 1, remainingLinks: 99, shortlinkAccessStatus: 'ACTIVE' };
+const assets = {
+  quota,
   accounts: [{ id: 'y1', name: 'Ydisks' }],
   channels: [{ id: 'c1', name: 'Q群' }],
   domains: [{ domainName: 'd.com', status: 'ACTIVE' }],
@@ -32,30 +35,26 @@ const assets: RustBackendAssetsSnapshot = {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(isTauriRuntime).mockReturnValue(false);
-  storageApi.loadStoredApiKey.mockReturnValue('');
-  vi.mocked(loadBackendAssets).mockReset();
-  vi.mocked(loadBackendQuota).mockReset();
+  vi.mocked(loadBusinessSettings).mockResolvedValue({ transferIntervals: { quark: 4, baidu: 4, xunlei: 4 }, hasApiKey: false });
+  vi.mocked(importLegacyBusinessSettings).mockResolvedValue({ transferIntervals: { quark: 4, baidu: 4, xunlei: 4 }, hasApiKey: false });
+  vi.mocked(loadBackendQuota).mockResolvedValue(quota);
+  vi.mocked(configureBackendApiKey).mockResolvedValue(quota);
   vi.mocked(loadBackendAssets).mockResolvedValue(assets);
-  vi.mocked(loadBackendQuota).mockResolvedValue({ maxLinks: 100, usedLinks: 1, remainingLinks: 99, shortlinkAccessStatus: 'ACTIVE' });
+  vi.mocked(clearBackendApiKey).mockResolvedValue();
 });
 
-const newHook = (setToast = (_: ToastState | null) => {}) => renderHook(({ toast }) => useApiConnection(toast), { initialProps: { toast: setToast } });
+const newHook = (setToast = (_: ToastState | null) => {}) => renderHook(() => useApiConnection(setToast));
 
 describe('useApiConnection', () => {
-  it('无存储 Key 时初始为 failed', () => {
+  it('初始不持有 API Key 明文', () => {
     const { result } = newHook();
     expect(result.current.apiKey).toBe('');
+    expect(result.current.hasApiKey).toBe(false);
     expect(result.current.apiConnectionStatus).toBe('failed');
+    expect(loadBusinessSettings).not.toHaveBeenCalled();
   });
 
-  it('有存储 Key 但非桌面端时初始为 idle 且不自动检测', () => {
-    storageApi.loadStoredApiKey.mockReturnValue('stored-key');
-    const { result } = newHook();
-    expect(result.current.apiConnectionStatus).toBe('idle');
-    expect(loadBackendQuota).not.toHaveBeenCalled();
-  });
-
-  it('setApiKeyDraft 空 -> failed；非空 -> idle', () => {
+  it('输入仅作为临时草稿', () => {
     const { result } = newHook();
     act(() => result.current.setApiKeyDraft('my-key'));
     expect(result.current.apiKey).toBe('my-key');
@@ -64,125 +63,100 @@ describe('useApiConnection', () => {
     expect(result.current.apiConnectionStatus).toBe('failed');
   });
 
-  it('detectApiKey 空 Key 直接 failed', async () => {
+  it('空草稿且后端无 Key 时不检测', async () => {
     const { result } = newHook();
-    await act(async () => {
-      await result.current.detectApiKey();
-    });
-    expect(result.current.apiConnectionStatus).toBe('failed');
+    await act(async () => result.current.detectApiKey());
+    expect(configureBackendApiKey).not.toHaveBeenCalled();
+    expect(loadBackendQuota).not.toHaveBeenCalled();
   });
 
-  it('detectApiKey 成功：连接、保存 Key、额度、toast、拉取资产', async () => {
-    const setToast = vi.fn();
-    const { result } = newHook(setToast);
-    act(() => result.current.setApiKeyDraft('k1'));
-    await act(async () => {
-      await result.current.detectApiKey();
-    });
-    expect(result.current.apiConnectionStatus).toBe('connected');
-    expect(result.current.apiKey).toBe('k1');
-    expect(saveStoredApiKey).toHaveBeenCalledWith('k1');
-    expect(result.current.quotaState).toEqual({ maxLinks: 100, usedLinks: 1, shortlinkAccessStatus: 'ACTIVE' });
-    expect(setToast).toHaveBeenCalledWith({ message: '后台已连接，剩余短链 99', tone: 'success' });
-    await waitFor(() => expect(result.current.ydisksAccounts).toHaveLength(1));
-    expect(result.current.domainOptions).toHaveLength(1);
-    expect(result.current.shortlinkOptions).toHaveLength(1);
-  });
-
-  it('detectApiKey 失败：failed + 错误 + danger toast', async () => {
-    vi.mocked(loadBackendQuota).mockRejectedValue({ stage: 'backend', message: '无效 Key' });
-    const setToast = vi.fn();
-    const { result } = newHook(setToast);
-    act(() => result.current.setApiKeyDraft('bad'));
-    await act(async () => {
-      await result.current.detectApiKey();
-    });
-    expect(result.current.apiConnectionStatus).toBe('failed');
-    expect(result.current.apiError).toContain('无效 Key');
-    expect(setToast).toHaveBeenCalledWith({ message: expect.stringContaining('无效 Key'), tone: 'danger' });
-  });
-
-  it('loadBackendAssets 失败时清空资产', async () => {
-    vi.mocked(loadBackendAssets).mockRejectedValue({ message: '资产拉取失败' });
-    const { result } = newHook();
-    act(() => result.current.setApiKeyDraft('k1'));
-    await act(async () => {
-      await result.current.detectApiKey();
-    });
-    await waitFor(() => expect(result.current.ydisksAccounts).toHaveLength(0));
-    expect(result.current.domainOptions).toHaveLength(0);
-  });
-
-  it('clearApiKeyImmediately 清除 Key 与状态', () => {
-    const { result } = newHook();
-    act(() => result.current.setApiKeyDraft('k1'));
-    act(() => result.current.clearApiKeyImmediately());
-    expect(clearStoredApiKey).toHaveBeenCalled();
+  it('检测成功由 Rust 保存并立即清除前端明文', async () => {
+    const toast = vi.fn();
+    const { result } = newHook(toast);
+    act(() => result.current.setApiKeyDraft(' k1 '));
+    await act(async () => result.current.detectApiKey());
+    expect(configureBackendApiKey).toHaveBeenCalledWith('k1');
     expect(result.current.apiKey).toBe('');
-    expect(result.current.apiConnectionStatus).toBe('failed');
-    expect(result.current.apiError).toBe('');
+    expect(result.current.hasApiKey).toBe(true);
+    expect(result.current.apiConnectionStatus).toBe('connected');
+    expect(result.current.quotaState.usedLinks).toBe(1);
+    await waitFor(() => expect(result.current.ydisksAccounts).toHaveLength(1));
+    expect(toast).toHaveBeenCalledWith({ message: '后台已连接，剩余短链 99', tone: 'success' });
   });
 
-  it('deductQuotaLocally 正数累加 usedLinks，非正数无副作用', () => {
+  it('检测失败不保存配置并显示错误', async () => {
+    vi.mocked(configureBackendApiKey).mockRejectedValue({ stage: 'backend', message: '无效 Key' });
+    const toast = vi.fn();
+    const { result } = newHook(toast);
+    act(() => result.current.setApiKeyDraft('bad'));
+    await act(async () => result.current.detectApiKey());
+    expect(result.current.hasApiKey).toBe(false);
+    expect(result.current.apiError).toContain('无效 Key');
+    expect(toast).toHaveBeenCalledWith({ message: expect.stringContaining('无效 Key'), tone: 'danger' });
+  });
+
+  it('资产加载失败清空资产但不破坏连接状态', async () => {
+    vi.mocked(loadBackendAssets).mockRejectedValue(new Error('失败'));
+    const { result } = newHook();
+    act(() => result.current.setApiKeyDraft('k1'));
+    await act(async () => result.current.detectApiKey());
+    await waitFor(() => expect(result.current.ydisksAccounts).toEqual([]));
+    expect(result.current.apiConnectionStatus).toBe('connected');
+  });
+
+  it('清除 Key 只调用 Rust', async () => {
+    const { result } = newHook();
+    act(() => result.current.setApiKeyDraft('k1'));
+    await act(async () => result.current.clearApiKeyImmediately());
+    expect(clearBackendApiKey).toHaveBeenCalledTimes(1);
+    expect(result.current.apiKey).toBe('');
+    expect(result.current.hasApiKey).toBe(false);
+  });
+
+  it('额度乐观扣减忽略非正数', () => {
     const { result } = newHook();
     act(() => result.current.deductQuotaLocally(5));
-    expect(result.current.quotaState.usedLinks).toBe(5);
     act(() => result.current.deductQuotaLocally(0));
-    expect(result.current.quotaState.usedLinks).toBe(5);
     act(() => result.current.deductQuotaLocally(-3));
     expect(result.current.quotaState.usedLinks).toBe(5);
   });
 
-  it('syncQuotaFromBackend 成功覆盖额度', async () => {
-    const { result } = newHook();
-    act(() => result.current.setApiKeyDraft('k1'));
-    vi.mocked(loadBackendQuota).mockResolvedValue({ maxLinks: 200, usedLinks: 50, remainingLinks: 150, shortlinkAccessStatus: 'ACTIVE' });
-    await act(async () => {
-      await result.current.syncQuotaFromBackend();
-    });
-    expect(result.current.quotaState).toEqual({ maxLinks: 200, usedLinks: 50, shortlinkAccessStatus: 'ACTIVE' });
-  });
-
-  it('syncQuotaFromBackend 失败时静默（保留本地值）', async () => {
-    const { result } = newHook();
-    act(() => result.current.setApiKeyDraft('k1'));
-    act(() => result.current.deductQuotaLocally(7));
-    vi.mocked(loadBackendQuota).mockRejectedValue({ message: '网络错误' });
-    await act(async () => {
-      await result.current.syncQuotaFromBackend();
-    });
-    // 保留本地乐观值
-    expect(result.current.quotaState.usedLinks).toBe(7);
-  });
-
-  it('syncQuotaFromBackend 空 Key 时直接返回', async () => {
-    const { result } = newHook();
-    await act(async () => {
-      await result.current.syncQuotaFromBackend();
-    });
-    expect(loadBackendQuota).not.toHaveBeenCalled();
-  });
-
-  it('桌面端启动且有存储 Key 时自动检测', async () => {
+  it('桌面启动从 Rust 脱敏设置恢复连接', async () => {
     vi.mocked(isTauriRuntime).mockReturnValue(true);
-    storageApi.loadStoredApiKey.mockReturnValue('stored-key');
+    vi.mocked(loadBusinessSettings).mockResolvedValue({ transferIntervals: { quark: 4, baidu: 4, xunlei: 4 }, hasApiKey: true });
     const { result } = newHook();
-    await waitFor(() => expect(loadBackendQuota).toHaveBeenCalled());
-    expect(result.current.apiKey).toBe('stored-key');
-  });
-
-  it('StrictMode 双调用时自动检测仅执行一次（ref 守卫）', async () => {
-    vi.mocked(isTauriRuntime).mockReturnValue(true);
-    storageApi.loadStoredApiKey.mockReturnValue('stored-key');
-    // renderHook 不会触发 StrictMode 双调用，改用 render 渲染真实组件以触发双调用；
-    // ref 守卫（167-169）确保 detectApiKey 仅执行一次。
-    const Probe = (props: { toast: (t: ToastState | null) => void }) => {
-      useApiConnection(props.toast);
-      return null;
-    };
-    render(createElement(StrictMode, null, createElement(Probe, { toast: () => {} })));
-    await waitFor(() => expect(loadBackendAssets).toHaveBeenCalledTimes(1));
-    // 双调用下若守卫失效会调用两次；这里断言恰好一次。
+    await waitFor(() => expect(result.current.apiConnectionStatus).toBe('connected'));
+    expect(result.current.hasApiKey).toBe(true);
+    expect(result.current.apiKey).toBe('');
+    expect(loadBackendQuota).toHaveBeenCalledTimes(1);
     expect(loadBackendAssets).toHaveBeenCalledTimes(1);
+  });
+
+  it('桌面启动把旧前端业务配置一次性迁移到 Rust 并删除旧键', async () => {
+    vi.mocked(isTauriRuntime).mockReturnValue(true);
+    localStorage.setItem('ydisks.transfer.apiKey.v1', 'old-key');
+    localStorage.setItem('ydisks.transfer.intervals.v1', JSON.stringify({ quark: 3, baidu: 5, xunlei: 6 }));
+    vi.mocked(importLegacyBusinessSettings).mockResolvedValue({
+      transferIntervals: { quark: 3, baidu: 5, xunlei: 6 }, hasApiKey: true,
+    });
+    const { result } = newHook();
+    await waitFor(() => expect(result.current.hasApiKey).toBe(true));
+    expect(importLegacyBusinessSettings).toHaveBeenCalledWith('old-key', { quark: 3, baidu: 5, xunlei: 6 });
+    expect(localStorage.getItem('ydisks.transfer.apiKey.v1')).toBeNull();
+    expect(localStorage.getItem('ydisks.transfer.intervals.v1')).toBeNull();
+  });
+
+  it('后端已配置时同步额度，失败保留乐观值', async () => {
+    vi.mocked(isTauriRuntime).mockReturnValue(true);
+    vi.mocked(loadBusinessSettings).mockResolvedValue({ transferIntervals: { quark: 4, baidu: 4, xunlei: 4 }, hasApiKey: true });
+    const { result } = newHook();
+    await waitFor(() => expect(result.current.hasApiKey).toBe(true));
+    vi.mocked(loadBackendQuota).mockResolvedValue({ ...quota, usedLinks: 50 });
+    await act(async () => result.current.syncQuotaFromBackend());
+    expect(result.current.quotaState.usedLinks).toBe(50);
+    act(() => result.current.deductQuotaLocally(7));
+    vi.mocked(loadBackendQuota).mockRejectedValue(new Error('网络错误'));
+    await act(async () => result.current.syncQuotaFromBackend());
+    expect(result.current.quotaState.usedLinks).toBe(57);
   });
 });

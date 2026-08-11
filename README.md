@@ -29,9 +29,9 @@ Ydisks 批量转存助手是一款跨平台桌面应用（macOS / Windows），�
 - 🔄 **批量转存** — 支持夸克、百度、迅雷三种网盘，单条 / 批量粘贴 / CSV 导入分享链接，自动识别平台、提取访问码、去重。
 - 🔗 **多渠道短链** — 转存完成后自动调用 Ydisks 后台创建原始链接，并按所选渠道逐个生成短链，支持多短链域名。
 - 🧠 **智能状态机** — 本地引擎驱动批次流转（`pending → transferring → sharing → creating_original → creating_shortlink → done`），平台级串行化（同一网盘同时只跑一个批次）。
-- ⏱️ **反限流** — 转存发起间隔 ≥4 秒（按网盘平台计数，跨批次生效），间隔期由短链创建填充，吞吐不浪费。
+- ⏱️ **反限流** — 转存发起间隔默认 4 秒，可按网盘平台配置（最低 3 秒，跨批次生效），间隔期由短链创建填充。
 - ⏸️ **暂停 / 继续 / 重试 / 取消** — 批次与单条粒度的控制；取消使用应用内确认弹窗，不弹原生 `confirm`。
-- 💾 **本地持久化** — 桌面端账号 / 批次 / 历史写入 SQLite（含版本化迁移），首次运行自动从旧 `localStorage` 迁移账号。
+- 💾 **分层持久化** — 转存间隔等具备默认值的运行参数由 Rust 写入 `config.json`，文件缺失时自动生成；账号凭证、API Key、批次与历史写入 SQLite。前端只保存主题偏好，首次运行会自动迁移旧数据。
 - 📊 **额度管理** — 短链额度本地乐观扣减 + 批次完成后与后台同步，避免高频轮询。
 - 🌗 **明暗主题** — 跟随系统 / 浅色 / 深色。
 - 📝 **可导出历史** — 完成批次可导出 CSV（系统原生保存对话框）。
@@ -67,7 +67,7 @@ Rust 依赖在首次 `npm run tauri:dev` / `tauri:build` 时由 Cargo 自动拉�
 npm run tauri:dev      # 编译 Rust + 启动应用窗口（前端热更新）
 ```
 
-> ℹ️ `npm run dev` 可单独启动前端（`http://localhost:5178`），但**仅用于纯前端调试**：浏览器中 `isTauriRuntime()` 为 false，网盘登录 / 转存 / 目录读取 / 后台 API 均不可用，持久化退回 `localStorage`。完整功能请在桌面端运行。
+> ℹ️ `npm run dev` 可单独启动前端（`http://localhost:5178`），但**仅用于纯前端调试**：浏览器中 `isTauriRuntime()` 为 false，网盘登录 / 转存 / 目录读取 / 后台 API 均不可用，也不会持久化任何业务配置。完整功能请在桌面端运行。
 
 ---
 
@@ -118,7 +118,7 @@ npm run tauri:dev      # 编译 Rust + 启动应用窗口（前端热更新）
    - **可用域名**（短链域名，如 `t.ydisks.cn`）
    - **额度摘要**（剩余短链数）
 
-API Key 在检测通过后本地保存（key: `ydisks.transfer.apiKey.v1`），下次启动自动恢复连接；「清除密钥」可移除。
+API Key 检测通过后由 Rust 保存到应用 SQLite，前端会立即清空明文输入，也不会在后续业务命令中传递密钥；下次启动通过后端返回的脱敏状态自动恢复连接。「清除密钥」会删除后端保存值。
 
 > **后端地址可覆盖：** 默认后台地址为 `https://console.ydisks.com`。如需指向自建 / 测试环境，设置环境变量 `YDISKS_CONSOLE_API_BASE` 后启动应用即可。
 
@@ -140,7 +140,7 @@ API Key 在检测通过后本地保存（key: `ydisks.transfer.apiKey.v1`），�
 - 查看运行中 / 排队 / 暂停的批次，实时进度与日志。
 - 支持 **暂停 / 继续 / 重试 / 取消**（取消有应用内确认弹窗）。
 - 每个队列项流转：`转存中 → 分享中 → 创建原始链接 → 创建短链 → 完成`。
-- 同一网盘平台同时只跑一个批次，其余排队；转存发起间隔 ≥4 秒（反限流）。
+- 同一网盘平台同时只跑一个批次，其余排队；转存发起间隔默认 4 秒，可在设置中按平台调整，最低 3 秒。
 
 ### 6. 查看历史与导出（历史页）
 
@@ -268,7 +268,7 @@ git push Ydisks-drive-assistant v1.1.0
 
 - **`App.tsx`** — 薄外壳：页面路由 + 模态编排 + 网盘账号 CRUD。状态机逻辑下沉到 hooks，纯逻辑在 `src/lib/`。
 - **`src/lib/`** — 纯模块（带单测）：`parsing`（链接解析）、`engine`（本地批次引擎）、`batchReducer`（批次状态机纯转移）、`bridge`（唯一接触 `@tauri-apps/api` 的模块，封装 `invoke`）、`mappers` / `guards` / `csv` / `format` / `storage`。
-- **`src/hooks/`** — 状态域：`useApiConnection`（API Key / 额度 / 后台资产）、`useBatchEngine`（**核心状态机**，1.6s 轮询驱动批次流转 + 限流 + 短链 + 持久化）、`useXunleiLogin`（迅雷扫码 / 密码登录 + 二次验证）、`useCookieModal` / `useToast` / `useThemeMode`。
+- **`src/hooks/`** — UI 状态域：`useApiConnection`（脱敏连接状态 / 额度 / 后台资产）、`useBatchEngine`（1.6s 轮询驱动批次展示与命令编排）、`useXunleiLogin`（迅雷登录交互）、`useCookieModal` / `useToast` / `useThemeMode`。转存限流和敏感配置均由 Rust 最终执行与保存。
 - Rust 调用全部经 `src/lib/bridge.ts` 的类型化包装，每个调用由 `isTauriRuntime()` 守卫、错误经 `formatBackendError()` 归一化。
 
 ### 后端
@@ -282,13 +282,14 @@ git push Ydisks-drive-assistant v1.1.0
 | `auth/` | 登录窗口编排与 Cookie / token 抓取 |
 | `import/parser.rs` | 分享链接解析、访问码提取、去重、额度测算 |
 | `db/` | SQLite 持久化（账号 / 批次 / 历史，版本化迁移） |
+| `runtime_config.rs` | 后端运行配置文件的生成、校验、原子保存与内存重载 |
 | `http/client.rs` | reqwest 单例 + JSON / URL / cookie 工具 |
 
 ### 关键机制
 
 - **批次状态机** — 1.6s 轮询推进队列项状态，决策（「该处理哪一项」「批次是否完成」）为 `batchReducer.ts` 中的纯谓词（带单测）。
 - **平台级串行化** — 同一网盘（`quark`/`baidu`/`xunlei`）同时只允许一个 `running` 批次，其余排队。
-- **转存限流** — 转存 effect 按 `ProviderKey` 记录 `lastTransferStartedAtRef`，两次 `transferProviderShare` 发起间隔 ≥4000ms，跨批次不重置；间隔期由短链创建（打 Ydisks 后台，不打网盘 API）填充。
+- **转存限流** — Rust 按平台共享限流状态，读取后端 `config.json` 中的间隔（默认 4 秒、最低 3 秒）；设置页修改后由 Rust 原子写盘并重新载入，前端不能绕过最低值。
 - **额度同步** — 每次 `createBackendLinks` 成功后 `deductQuotaLocally(count)` 本地乐观扣减；批次全部完成移入历史时 `syncQuotaFromBackend()` 一次校正漂移。
 
 ---

@@ -13,7 +13,9 @@
 import { useEffect, useRef, useState } from 'react';
 
 import {
-  createBackendLinks,
+  createBackendOriginalLink,
+  createBackendShortLink,
+  archiveBatchInDb,
   deleteBatchFromDb,
   isTauriRuntime,
   loadBatchesFromDb,
@@ -51,9 +53,6 @@ import type { ToastState } from './useToast';
 import type { BatchDraft, BatchLogEntry, BatchRecord, HistoryRecord } from '../lib/types';
 import type { BatchMonitor, ProviderAccount, ProviderKey, QueueItem } from '../types';
 
-/** 同一网盘平台两次转存发起之间的最小间隔（毫秒），用于规避平台限流；短链创建在此间隔内进行。 */
-const TRANSFER_MIN_INTERVAL_MS = 4000;
-
 /** 确认弹窗状态：标题 / 消息 / 确认按钮文案 / 是否危险 / 确认回调。 */
 export type ConfirmState = {
   title: string;
@@ -67,8 +66,8 @@ export type ConfirmState = {
 export interface BatchEngineDeps {
   /** 当前网盘账号列表（转存 effect 据此查找队列项对应账号）。 */
   providerAccounts: ProviderAccount[];
-  /** 后台 API Key（短链 effect 创建后台链接所需）。 */
-  apiKey: string;
+  /** Rust 后台是否已保存 API Key；前端不持有密钥原值。 */
+  hasBackendApiKey: boolean;
   /** 账号更新回调（转存遇到鉴权错误时把账号标记为 manual_required）。 */
   updateProviderAccount: (accountId: string, updater: (account: ProviderAccount) => ProviderAccount) => void;
   /** Toast 反馈回调。 */
@@ -81,6 +80,8 @@ export interface BatchEngineDeps {
   deductQuotaLocally: (count: number) => void;
   /** 与线上同步短链额度（一批转存全部完成后调用）。 */
   syncQuotaFromBackend: () => Promise<void>;
+  /** 当前后台剩余短链额度，用于释放 waiting_quota 项。 */
+  availableShortLinks?: number;
 }
 
 /** 批次引擎域 hook 返回值。 */
@@ -101,17 +102,14 @@ export interface BatchEngine {
  * @param deps 跨域依赖（账号 / 后台连接 / toast / 确认弹窗 / 路由）
  */
 export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
-  const { providerAccounts, apiKey, updateProviderAccount, setToast, requestConfirm, onBatchCreated, deductQuotaLocally, syncQuotaFromBackend } = deps;
+  const { providerAccounts, hasBackendApiKey, updateProviderAccount, setToast, requestConfirm, onBatchCreated, deductQuotaLocally, syncQuotaFromBackend, availableShortLinks = 0 } = deps;
 
   const [batches, setBatches] = useState<BatchRecord[]>([]);
   const [histories, setHistories] = useState<HistoryRecord[]>([]);
+  const activeBatchIdsRef = useRef(new Set<string>());
+  activeBatchIdsRef.current = new Set(batches.map((batch) => batch.id));
   const backendRequestsRef = useRef(new Set<string>());
-  // 按平台记录上次转存发起时间戳，用于强制两次转存间隔 ≥ TRANSFER_MIN_INTERVAL_MS（规避限流）。
-  const lastTransferStartedAtRef = useRef<Record<ProviderKey, number>>({
-    quark: 0,
-    baidu: 0,
-    xunlei: 0,
-  });
+  const archivedRequestsRef = useRef(new Set<string>());
 
   // 启动时从 SQLite 恢复批次与历史（刷新不丢）。
   useEffect(() => {
@@ -121,6 +119,7 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
     void (async () => {
       try {
         const [savedBatches, savedHistory] = await Promise.all([loadBatchesFromDb(), loadHistoryFromDb()]);
+        knownBatchIdsRef.current = new Set(savedBatches.map((batch) => batch.id));
         setBatches((current) => (current.length > 0 ? current : normalizePlatformQueues(savedBatches)));
         setHistories((current) => (current.length > 0 ? current : savedHistory));
       } catch (error) {
@@ -129,9 +128,36 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
     })();
   }, []);
 
+  // 额度增加后，扣除尚未完成项已预留的额度，再按队列顺序释放等待项。
+  useEffect(() => {
+    setBatches((current) => {
+      let free = availableShortLinks - current.reduce((sum, batch) => {
+        const perItem = batch.shortLinkTargets.length;
+        return sum + batch.items.filter((item) => item.status !== 'done' && item.status !== 'waiting_quota').length * perItem;
+      }, 0);
+      if (free <= 0) return current;
+      let changed = false;
+      const next = current.map((batch) => {
+        const cost = batch.shortLinkTargets.length;
+        if (cost === 0) return batch;
+        const items = batch.items.map((item) => {
+          if (item.status !== 'waiting_quota' || free < cost) return item;
+          free -= cost;
+          changed = true;
+          return { ...item, status: 'pending' as const, step: '额度已恢复，排队等待' };
+        });
+        if (items === batch.items || !items.some((item, index) => item !== batch.items[index])) return batch;
+        const waitingQuota = items.filter((item) => item.status === 'waiting_quota').length;
+        return { ...batch, items, waitingQuota, status: batch.status === 'waiting_quota' ? 'queued' as const : batch.status };
+      });
+      return changed ? normalizePlatformQueues(next) : current;
+    });
+  }, [availableShortLinks]);
+
   // 批次变更时（去抖 2s）持久化到 SQLite，避免引擎 1.6s 轮询频繁写库。
   const batchSaveTimerRef = useRef<number | null>(null);
   const knownBatchIdsRef = useRef<Set<string>>(new Set());
+  const batchWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   useEffect(() => {
     if (!isTauriRuntime()) {
       return undefined;
@@ -141,7 +167,7 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
     batchSaveTimerRef.current = window.setTimeout(() => {
       batchSaveTimerRef.current = null;
       const currentIds = new Set(batches.map((batch) => batch.id));
-      void (async () => {
+      batchWriteQueueRef.current = batchWriteQueueRef.current.catch(() => undefined).then(async () => {
         try {
           for (const batch of batches) {
             await saveBatchToDb(batch);
@@ -155,7 +181,7 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
         } catch (error) {
           console.warn('保存批次失败', error);
         }
-      })();
+      });
     }, 2000);
     return () => {
       if (batchSaveTimerRef.current !== null) {
@@ -209,9 +235,8 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
   };
 
   // 转存 effect：对每个 running 批次中待转存项发起 transferProviderShare。
-  // 强制同一平台两次转存发起间隔 ≥ TRANSFER_MIN_INTERVAL_MS 以规避限流；短链创建在此间隔内进行。
+  // 此处只编排 UI 队列；真正的按平台间隔由 Rust 共享限流器强制执行。
   useEffect(() => {
-    const now = Date.now();
     batches.forEach((batch) => {
       if (!batch.localEngine || batch.status !== 'running') {
         return;
@@ -227,21 +252,7 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
         return;
       }
 
-      // 限流：距该平台上次转存发起不足 4s 则本轮跳过，等下一次轮询再试。
-      const lastStartedAt = lastTransferStartedAtRef.current[batch.provider] ?? 0;
-      if (now - lastStartedAt < TRANSFER_MIN_INTERVAL_MS) {
-        // 仅在 step 文案未标记时限流时更新一次，避免每次轮询都触发额外渲染。
-        if (item.step !== '转存排队中（限流间隔）') {
-          updateQueueItem(batch.id, item.id, (currentItem) => ({
-            ...currentItem,
-            step: '转存排队中（限流间隔）',
-          }));
-        }
-        return;
-      }
-
       const account = providerAccounts.find((providerAccount) => providerAccount.id === item.accountId);
-      lastTransferStartedAtRef.current[batch.provider] = now;
       backendRequestsRef.current.add(requestKey);
       appendBatchLog(batch.id, createBatchLog('info', '开始转存到我的网盘', item.title));
       void transferProviderShare({
@@ -250,19 +261,20 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
         targetFolderRef: batch.targetFolderRef,
       })
         .then((result) => {
+          if (!activeBatchIdsRef.current.has(batch.id)) return;
           appendBatchLog(batch.id, createBatchLog('success', `转存完成：${result.shareUrl}`, item.title));
           // 仅转存模式（无 API Key 或未绑定后台账号）：跳过后台登记，直接完成。
           // 有后台登记需求时才推进到 creating_original，由短链 effect 接管。
-          const next = deriveTransferSuccessUpdate(batch, apiKey, result.shareUrl);
+          const next = deriveTransferSuccessUpdate(batch, hasBackendApiKey ? 'configured' : '', result.shareUrl);
           updateQueueItem(batch.id, item.id, (currentItem) => ({ ...currentItem, ...next }));
         })
         .catch((error) => {
+          if (!activeBatchIdsRef.current.has(batch.id)) return;
           const message = formatBackendError(error);
           console.error('[Ydisks Transfer] 转存失败', {
             batchId: batch.id,
             itemId: item.id,
             title: item.title,
-            sourceUrl: item.sourceUrl,
             message,
           });
           appendBatchLog(batch.id, createBatchLog('danger', `转存失败：${message}`, item.title));
@@ -289,7 +301,7 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
     });
     // updateProviderAccount 仅用稳定的 setProviderAccounts，无需入依赖（与原实现一致）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [batches, providerAccounts]);
+  }, [batches, providerAccounts, hasBackendApiKey]);
 
   // 短链 effect：对每个 running 批次中待登记项发起 createBackendLinks。
   useEffect(() => {
@@ -298,7 +310,7 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
         return;
       }
 
-      const item = findItemToShortlink(batch);
+      const item = findItemToShortlink(batch) ?? batch.items.find((candidate) => candidate.status === 'creating_shortlink' && Boolean(candidate.originalLinkId));
       if (!item) {
         return;
       }
@@ -311,60 +323,77 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
         return;
       }
 
+      const completedChannels = new Set((item.shortLinks ?? []).map((link) => `${link.channelId ?? ''}:${link.domain}`));
+      const nextTarget = batch.shortLinkTargets.find((target) => !completedChannels.has(`${target.channelId}:${target.domain}`));
       backendRequestsRef.current.add(requestKey);
-      const hasShortLinkTargets = batch.shortLinkTargets.length > 0;
+      const creatingOriginal = !item.originalLinkId;
       appendBatchLog(
         batch.id,
         createBatchLog(
           'info',
-          hasShortLinkTargets ? '开始登记后台原始链接并创建短链' : '开始登记后台原始链接',
+          creatingOriginal ? '开始登记后台原始链接' : nextTarget ? `开始创建渠道短链：${nextTarget.channelName}` : '后台链接创建完成',
           item.title,
         ),
       );
       updateQueueItem(batch.id, item.id, (currentItem) => ({
         ...currentItem,
-        status: 'creating_shortlink',
-        step: hasShortLinkTargets ? `当前处理：创建 ${batch.shortLinkTargets.length} 个渠道短链` : '当前处理：登记后台原始链接',
+        status: creatingOriginal ? 'creating_original' : 'creating_shortlink',
+        step: creatingOriginal ? '当前处理：登记后台原始链接' : nextTarget ? `当前处理：创建 ${nextTarget.channelName} 短链` : '后台链接创建完成',
         progress: 85,
       }));
 
-      void createBackendLinks({
-        apiKey,
-        item,
-        targets: batch.shortLinkTargets,
-        ydisksAccountId: batch.ydisksAccountId,
-      })
-        .then((result) => {
+      const operation = creatingOriginal
+        ? createBackendOriginalLink(item, batch.ydisksAccountId).then((originalLinkId) => ({ originalLinkId }))
+        : nextTarget
+          ? createBackendShortLink(item, nextTarget).then((shortLink) => ({ shortLink }))
+          : Promise.resolve({ complete: true as const });
+      void operation
+        .then(async (result) => {
+          if (!activeBatchIdsRef.current.has(batch.id)) return;
+          if ('originalLinkId' in result) {
+            const applyOriginal = (currentItem: QueueItem) => ({ ...currentItem, originalLinkId: result.originalLinkId, status: 'creating_shortlink' as const, progress: 75, step: '原始链接已登记' });
+            // Persist the checkpoint before allowing the next stage to run.
+            await saveBatchToDb(reduceQueueItemUpdate(batch, item.id, applyOriginal)).catch((error) => {
+              console.warn('保存建链检查点失败', error);
+            });
+            if (!activeBatchIdsRef.current.has(batch.id)) return;
+            updateQueueItem(batch.id, item.id, applyOriginal);
+            return;
+          }
+          const shortLinks = 'shortLink' in result ? [...(item.shortLinks ?? []), result.shortLink] : (item.shortLinks ?? []);
+          const complete = !nextTarget || shortLinks.length >= batch.shortLinkTargets.length;
           appendBatchLog(
             batch.id,
             createBatchLog(
               'success',
-              result.shortLinks.length > 0
-                ? `后台创建完成：${result.shortLinks.length} 个短链`
-                : '后台原始链接登记完成',
+              complete ? `后台创建完成：${shortLinks.length} 个短链` : `渠道短链创建完成：${nextTarget?.channelName ?? ''}`,
               item.title,
             ),
           );
           // 本地乐观扣减短链用量，使「剩余额度」即时下降；真实额度在批次完成后与线上同步。
-          deductQuotaLocally(result.shortLinks.length);
-          updateQueueItem(batch.id, item.id, (currentItem) => ({
+          if ('shortLink' in result) deductQuotaLocally(1);
+          const applyShortLink = (currentItem: QueueItem): QueueItem => ({
             ...currentItem,
             error: undefined,
-            originalLinkId: result.originalLinkId,
-            progress: 100,
-            shortLinks: result.shortLinks,
-            shortUrl: result.shortLinks[0]?.shortUrl,
-            status: 'done',
-            step: result.shortLinks.length > 0 ? '短链创建完成' : '原始链接登记完成',
-          }));
+            progress: complete ? 100 : 85,
+            shortLinks,
+            shortUrl: shortLinks[0]?.shortUrl,
+            status: complete ? 'done' : 'creating_shortlink',
+            step: complete ? (shortLinks.length > 0 ? '短链创建完成' : '原始链接登记完成') : '继续创建渠道短链',
+          });
+          await saveBatchToDb(reduceQueueItemUpdate(batch, item.id, applyShortLink)).catch((error) => {
+            console.warn('保存建链检查点失败', error);
+          });
+          if (!activeBatchIdsRef.current.has(batch.id)) return;
+          updateQueueItem(batch.id, item.id, applyShortLink);
         })
         .catch((error) => {
+          if (!activeBatchIdsRef.current.has(batch.id)) return;
           const message = formatBackendError(error);
           console.error('[Ydisks Transfer] 后台链接创建失败', {
             batchId: batch.id,
             itemId: item.id,
             title: item.title,
-            shareUrl: item.shareUrl,
             message,
           });
           appendBatchLog(batch.id, createBatchLog('danger', `后台创建失败：${message}`, item.title));
@@ -380,7 +409,7 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
           backendRequestsRef.current.delete(requestKey);
         });
     });
-  }, [apiKey, batches]);
+  }, [batches]);
 
   // 完成 effect：全部 done 的批次转为成功历史并移出运行列表，随后与线上同步短链额度。
   useEffect(() => {
@@ -390,14 +419,25 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
       return;
     }
 
-    const completedIds = new Set(completed.map((batch) => batch.id));
-    setHistories((current) => [
-      ...completed.map((batch) => batchToHistory(batch, 'success')),
-      ...current,
-    ]);
-    setBatches((current) => normalizePlatformQueues(current.filter((batch) => !completedIds.has(batch.id))));
+    completed.forEach((batch) => {
+      if (archivedRequestsRef.current.has(batch.id)) return;
+      archivedRequestsRef.current.add(batch.id);
+      const history = batchToHistory(batch, 'success');
+      void archiveBatchInDb(batch.id, history).then(() => {
+        knownBatchIdsRef.current.delete(batch.id);
+        setHistories((current) => current.some((item) => item.id === history.id) ? current : [history, ...current]);
+        setBatches((current) => normalizePlatformQueues(current.filter((item) => item.id !== batch.id)));
+        void syncQuotaFromBackend();
+      }).catch((error) => {
+        archivedRequestsRef.current.delete(batch.id);
+        console.warn('归档批次失败', error);
+        setToast({ message: '批次已完成，但归档失败，将自动重试', tone: 'danger' });
+        window.setTimeout(() => {
+          setBatches((current) => current.some((item) => item.id === batch.id) ? [...current] : current);
+        }, 1000);
+      });
+    });
     // 一批转存全部完成后，与线上同步真实短链额度（修正本地乐观扣减的累计误差）。
-    void syncQuotaFromBackend();
   }, [batches, syncQuotaFromBackend]);
 
   // === 公共操作 ===
@@ -489,9 +529,16 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
       confirmLabel: '取消批次',
       danger: true,
       onConfirm: () => {
-        setHistories((current) => [batchToHistory(batch, 'failed'), ...current]);
-        setBatches((current) => normalizePlatformQueues(current.filter((item) => item.id !== batchId)));
-        setToast({ message: '批次已取消', tone: 'info' });
+        const history = batchToHistory(batch, 'failed');
+        void archiveBatchInDb(batchId, history).then(() => {
+          knownBatchIdsRef.current.delete(batchId);
+          setHistories((current) => [history, ...current]);
+          setBatches((current) => normalizePlatformQueues(current.filter((item) => item.id !== batchId)));
+          setToast({ message: '批次已取消', tone: 'info' });
+        }).catch((error) => {
+          console.warn('取消批次归档失败', error);
+          setToast({ message: '取消失败：无法安全归档批次', tone: 'danger' });
+        });
       },
     });
   };

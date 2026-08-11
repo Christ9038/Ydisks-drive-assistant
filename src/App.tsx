@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { PageKey, ProviderAccount, ProviderKey, ProviderStatus } from './types';
 import {
   providerAccountsStorageKey,
+  defaultTransferIntervals,
   legacyDemoProviderAccountIds,
   providerLabels,
 } from './lib/constants';
@@ -27,7 +28,9 @@ import { formatBackendError } from './lib/format';
 import { createProviderAccount } from './lib/engine';
 import {
   loadStoredProviderAccounts,
-  saveStoredProviderAccounts,
+  loadLegacyBusinessSettings,
+  clearLegacyBusinessSettings,
+  normalizeTransferIntervals,
 } from './lib/storage';
 import {
   isTauriRuntime,
@@ -38,6 +41,11 @@ import {
   upsertProviderAccountToDb,
   deleteProviderAccountFromDb,
   importLegacyAccountsToDb,
+  loadBusinessSettings,
+  importLegacyBusinessSettings,
+  saveTransferIntervals,
+  clearProviderCredentialInDb,
+  saveProviderCredential,
   openLogDir as openLogDirBridge,
   downloadHistoryCsv,
 } from './lib/bridge';
@@ -66,6 +74,7 @@ import type {
   RustQuarkLoginResult,
   RustProviderLoginEvent,
   HistoryRecord,
+  TransferIntervalSettings,
 } from './lib/types';
 
 const primaryPages: PageKey[] = ['tasks', 'status', 'history'];
@@ -101,11 +110,16 @@ function App() {
   const [dedupeEnabled, setDedupeEnabled] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { themeMode, setThemeMode } = useThemeMode();
-  const [providerAccounts, setProviderAccounts] = useState<ProviderAccount[]>(loadStoredProviderAccounts);
+  const [transferIntervals, setTransferIntervals] = useState<TransferIntervalSettings>({ ...defaultTransferIntervals });
+  const transferSettingsRevisionRef = useRef(0);
+  const desktopRuntime = isTauriRuntime();
+  const [providerAccounts, setProviderAccounts] = useState<ProviderAccount[]>([]);
+  const [accountsHydrated, setAccountsHydrated] = useState(!desktopRuntime);
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
   const { toast, setToast } = useToast();
   const {
     apiKey,
+    hasApiKey,
     apiConnectionStatus,
     apiError,
     quotaState,
@@ -119,7 +133,6 @@ function App() {
     syncQuotaFromBackend,
   } = useApiConnection(setToast);
 
-  const hasApiKey = apiKey.trim().length > 0;
   const apiKeySaved = apiConnectionStatus === 'connected' && hasApiKey;
   const apiStatusLabel = hasApiKey ? apiConnectionLabels[apiConnectionStatus] : '未连接';
   const apiStatusTone = hasApiKey ? apiConnectionTones[apiConnectionStatus] : 'danger';
@@ -151,9 +164,18 @@ function App() {
             return;
           }
         }
-        setProviderAccounts(dbAccounts);
+        setProviderAccounts((current) => {
+          if (current.length === 0) return dbAccounts;
+          const currentIds = new Set(current.map((account) => account.id));
+          return [...current, ...dbAccounts.filter((account) => !currentIds.has(account.id))];
+        });
       } catch (error) {
         console.warn('加载网盘账号失败', error);
+        setToast({ message: '加载网盘账号失败，已暂停账号数据同步', tone: 'danger' });
+      } finally {
+        if (!cancelled) {
+          setAccountsHydrated(true);
+        }
       }
     })();
     return () => {
@@ -161,20 +183,21 @@ function App() {
     };
   }, []);
 
-  // 账号变更时同步到 SQLite（浏览器开发环境仍写 localStorage）。
+  // 账号展示元数据变更时同步到 SQLite；浏览器开发模式不持久化业务数据。
   const knownAccountIdsRef = useRef<Set<string>>(new Set());
+  const accountWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   useEffect(() => {
+    if (!accountsHydrated) {
+      return;
+    }
     const realAccounts = providerAccounts.filter((account) => !legacyDemoProviderAccountIds.has(account.id));
     if (realAccounts.length !== providerAccounts.length) {
       setProviderAccounts(realAccounts);
       return;
     }
-    if (!isTauriRuntime()) {
-      saveStoredProviderAccounts(realAccounts);
-      return;
-    }
+    if (!isTauriRuntime()) return;
     const currentIds = new Set(realAccounts.map((account) => account.id));
-    void (async () => {
+    accountWriteQueueRef.current = accountWriteQueueRef.current.catch(() => undefined).then(async () => {
       try {
         for (const account of realAccounts) {
           await upsertProviderAccountToDb(account);
@@ -188,8 +211,8 @@ function App() {
       } catch (error) {
         console.warn('同步网盘账号失败', error);
       }
-    })();
-  }, [providerAccounts]);
+    });
+  }, [accountsHydrated, providerAccounts]);
 
   useEffect(() => {
     if (!isTauriRuntime()) {
@@ -203,7 +226,7 @@ function App() {
         account.id === accountId
           ? {
               ...account,
-              cookie: result.cookie,
+              hasCredential: result.hasCredential,
               status: 'connected',
               loginName: result.loginName || `${providerLabels[provider]}已登录账号`,
               pendingReason: undefined,
@@ -234,6 +257,34 @@ function App() {
     setProviderAccounts((current) => current.map((account) => account.id === accountId ? updater(account) : account));
   };
 
+  const updateTransferInterval = (provider: ProviderKey, seconds: number) => {
+    const previous = transferIntervals;
+    const next = normalizeTransferIntervals({ ...transferIntervals, [provider]: seconds });
+    const revision = ++transferSettingsRevisionRef.current;
+    setTransferIntervals(next);
+    void saveTransferIntervals(next)
+      .catch((error) => {
+        if (transferSettingsRevisionRef.current === revision) setTransferIntervals(previous);
+        setToast({ message: `保存转存间隔失败：${formatBackendError(error)}`, tone: 'danger' });
+      });
+  };
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    const legacy = loadLegacyBusinessSettings();
+    const settingsPromise = legacy.apiKey || legacy.transferIntervals
+      ? importLegacyBusinessSettings(legacy.apiKey, legacy.transferIntervals).then((settings) => {
+          clearLegacyBusinessSettings();
+          return settings;
+        })
+      : loadBusinessSettings();
+    void settingsPromise
+      .then((settings) => {
+        if (transferSettingsRevisionRef.current === 0) setTransferIntervals(settings.transferIntervals);
+      })
+      .catch((error) => setToast({ message: `加载业务设置失败：${formatBackendError(error)}`, tone: 'danger' }));
+  }, []);
+
   const {
     batches,
     histories,
@@ -245,19 +296,20 @@ function App() {
     cancelBatch,
   } = useBatchEngine({
     providerAccounts,
-    apiKey,
+    hasBackendApiKey: hasApiKey,
     updateProviderAccount,
     setToast,
     requestConfirm,
     onBatchCreated: () => selectPage('status'),
     deductQuotaLocally,
     syncQuotaFromBackend,
+    availableShortLinks: Math.max(quotaState.maxLinks - quotaState.usedLinks, 0),
   });
 
   const clearApiKey = () => {
     requestConfirm({
       title: '清除 API Key',
-      message: '确认清除本地保存的 API Key？清除后需要重新填写并检测。',
+      message: '确认清除 Rust 后台保存的 API Key？清除后需要重新填写并检测。',
       confirmLabel: '清除密钥',
       danger: true,
       onConfirm: clearApiKeyImmediately,
@@ -313,7 +365,7 @@ function App() {
     isCookieModalOpenFor,
     setCookieDraft,
     submitCookieModal,
-  } = useCookieModal(providerAccounts, updateProviderAccount);
+  } = useCookieModal(providerAccounts, updateProviderAccount, saveProviderCredential);
 
   const {
     xunleiQrAccount,
@@ -430,13 +482,13 @@ function App() {
         }));
         return;
       } else {
-        result = account.cookie && !awaitingLogin
+        result = account.hasCredential && !awaitingLogin
           ? await checkProviderLogin(account)
           : await captureProviderLogin(account);
       }
       updateProviderAccount(accountId, (current) => ({
         ...current,
-        cookie: result.cookie,
+        hasCredential: result.hasCredential,
         status: 'connected',
         loginName: result.loginName || '已登录账号',
         pendingReason: undefined,
@@ -476,14 +528,16 @@ function App() {
     if (isCookieModalOpenFor(accountId)) {
       resetCookieModal();
     }
-    updateProviderAccount(accountId, (account) => ({
-      ...account,
-      cookie: undefined,
-      status: 'expired',
-      loginName: '未登录',
-      pendingReason: '本地会话已清理',
-      lastChecked: '刚刚',
-    }));
+    void clearProviderCredentialInDb(accountId).then(() => {
+      updateProviderAccount(accountId, (account) => ({
+        ...account,
+        hasCredential: false,
+        status: 'expired',
+        loginName: '未登录',
+        pendingReason: '本地会话已清理',
+        lastChecked: '刚刚',
+      }));
+    }).catch((error) => setToast({ message: `清理会话失败：${formatBackendError(error)}`, tone: 'danger' }));
   };
 
 
@@ -533,6 +587,7 @@ function App() {
             providers={providerAccounts}
             quota={quotaState}
             themeMode={themeMode}
+            transferIntervals={transferIntervals}
             onClearApiKey={clearApiKey}
             onDetectApiKey={handleDetectApiKey}
             onProviderAdd={handleProviderAdd}
@@ -542,11 +597,12 @@ function App() {
             onProviderCookiePaste={handleProviderCookiePaste}
             onProviderLogin={handleProviderLogin}
             onThemeModeChange={setThemeMode}
+            onTransferIntervalChange={updateTransferInterval}
             onOpenLogDir={openLogDir}
           />
         );
     }
-  }, [activePage, apiError, apiKey, apiStatusLabel, apiStatusTitle, apiStatusTone, batches, connectedAccountCount, dedupeEnabled, domainOptions, histories, providerAccounts, quotaState, shortlinkOptions, themeMode, ydisksAccounts]);
+  }, [activePage, apiError, apiKey, apiStatusLabel, apiStatusTitle, apiStatusTone, batches, connectedAccountCount, dedupeEnabled, domainOptions, histories, providerAccounts, quotaState, shortlinkOptions, themeMode, transferIntervals, ydisksAccounts]);
 
 
   return (
@@ -618,7 +674,7 @@ function App() {
               <input
                 aria-label="API Key"
                 onChange={(event) => setApiKeyDraft(event.target.value)}
-                placeholder="API Key"
+                placeholder={hasApiKey ? '已安全保存到 Rust 后台' : 'API Key'}
                 type="password"
                 value={apiKey}
               />
@@ -632,7 +688,7 @@ function App() {
               aria-label="清除 API Key"
               title="清除 API Key"
               onClick={clearApiKeyImmediately}
-              disabled={!apiKey}
+              disabled={!apiKey && !hasApiKey}
             >
               <Trash2 size={19} strokeWidth={2.1} />
             </button>

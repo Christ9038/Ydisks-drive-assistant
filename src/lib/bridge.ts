@@ -34,6 +34,7 @@ import type {
   RustBackendAssetsSnapshot,
   RustBackendCreationResult,
   RustBackendQuotaSummary,
+  RustBusinessSettings,
   RustBatchRow,
   RustHistoryRow,
   RustImportParseResult,
@@ -89,8 +90,7 @@ export const transferProviderShare = async ({
 
   try {
     return await invoke<RustQuarkTransferResult>('transfer_share_command', {
-      provider: item.provider,
-      credential: account?.cookie ?? '',
+      accountId: account?.id ?? item.accountId ?? '',
       sourceUrl: item.sourceUrl,
       targetFolderRef,
       title: item.title,
@@ -117,7 +117,7 @@ export const listProviderFolders = async ({
   folderRef: string;
   provider: ProviderKey;
 }): Promise<RustProviderFolderItem[]> => {
-  if (!account?.cookie) {
+  if (!account?.hasCredential) {
     throw new Error(`${providerLabels[provider]}账号缺少登录态，请重新登录`);
   }
   if (!isTauriRuntime()) {
@@ -125,8 +125,7 @@ export const listProviderFolders = async ({
   }
   try {
     return await invoke<RustProviderFolderItem[]>('list_provider_folders_command', {
-      provider,
-      credential: account.cookie,
+      accountId: account.id,
       folderRef,
     });
   } catch (error) {
@@ -220,16 +219,25 @@ export const captureProviderLogin = async (
 export const checkProviderLogin = async (
   account: ProviderAccount,
 ): Promise<RustQuarkLoginResult> => {
-  if (!account.cookie) {
+  if (!account.hasCredential) {
     throw new Error(`${providerLabels[account.provider]}账号缺少登录态，请重新登录`);
   }
   if (!isTauriRuntime()) {
     throw new Error('请在桌面端运行后检测登录态');
   }
   return invoke<RustQuarkLoginResult>('check_provider_login_command', {
-    provider: account.provider,
-    credential: account.cookie,
+    accountId: account.id,
   });
+};
+
+/** 手动凭证只在提交瞬间传给 Rust，由 Rust 校验并写入 SQLite。 */
+export const saveProviderCredential = async (accountId: string, credential: string): Promise<RustQuarkLoginResult> => {
+  if (!isTauriRuntime()) throw new Error('请在桌面端运行后保存登录态');
+  try {
+    return await invoke<RustQuarkLoginResult>('save_provider_credential_command', { accountId, credential });
+  } catch (error) {
+    throw new Error(formatBackendError(error));
+  }
 };
 
 // === 账号 / 批次 / 历史 持久化（SQLite，桌面端） ===
@@ -271,6 +279,48 @@ export const deleteProviderAccountFromDb = async (id: string): Promise<void> => 
   }
 };
 
+export const clearProviderCredentialInDb = async (id: string): Promise<void> => {
+  if (!isTauriRuntime()) return;
+  try { await invoke('clear_provider_credential_command', { id }); }
+  catch (error) { throw new Error(formatBackendError(error)); }
+};
+
+export const loadBusinessSettings = async (): Promise<RustBusinessSettings> => {
+  if (!isTauriRuntime()) return { transferIntervals: { quark: 4, baidu: 4, xunlei: 4 }, hasApiKey: false };
+  try { return await invoke<RustBusinessSettings>('get_business_settings_command'); }
+  catch (error) { throw new Error(formatBackendError(error)); }
+};
+
+export const saveTransferIntervals = async (intervals: RustBusinessSettings['transferIntervals']) => {
+  if (!isTauriRuntime()) return intervals;
+  try { return await invoke<RustBusinessSettings['transferIntervals']>('set_transfer_intervals_command', { intervals }); }
+  catch (error) { throw new Error(formatBackendError(error)); }
+};
+
+export const configureBackendApiKey = async (apiKey: string): Promise<RustBackendQuotaSummary> => {
+  if (!isTauriRuntime()) throw new Error('请在桌面端运行后配置 API Key');
+  try { return await invoke<RustBackendQuotaSummary>('configure_backend_api_key_command', { apiKey }); }
+  catch (error) { throw new Error(formatBackendError(error)); }
+};
+
+export const clearBackendApiKey = async (): Promise<void> => {
+  if (!isTauriRuntime()) return;
+  try { await invoke('clear_backend_api_key_command'); }
+  catch (error) { throw new Error(formatBackendError(error)); }
+};
+
+export const importLegacyBusinessSettings = async (
+  apiKey?: string,
+  intervals?: RustBusinessSettings['transferIntervals'],
+): Promise<RustBusinessSettings> => {
+  if (!isTauriRuntime()) return { transferIntervals: intervals ?? { quark: 4, baidu: 4, xunlei: 4 }, hasApiKey: false };
+  try {
+    return await invoke<RustBusinessSettings>('import_legacy_business_settings_command', { apiKey, intervals });
+  } catch (error) {
+    throw new Error(formatBackendError(error));
+  }
+};
+
 /** 一次性把旧 localStorage 账号导入 SQLite，返回导入条数。 */
 export const importLegacyAccountsToDb = async (accounts: ProviderAccount[]): Promise<number> => {
   if (!isTauriRuntime() || accounts.length === 0) {
@@ -278,7 +328,10 @@ export const importLegacyAccountsToDb = async (accounts: ProviderAccount[]): Pro
   }
   try {
     return await invoke<number>('import_legacy_accounts_command', {
-      json: JSON.stringify(accounts.map(accountToRow)),
+      json: JSON.stringify(accounts.map((account) => ({
+        ...accountToRow(account),
+        credential: (account as ProviderAccount & { cookie?: string }).cookie,
+      }))),
     });
   } catch (error) {
     throw new Error(formatBackendError(error));
@@ -329,6 +382,16 @@ export const saveHistoryToDb = async (history: HistoryRecord): Promise<void> => 
   }
   try {
     await invoke('save_history_command', { history: historyToRow(history) });
+  } catch (error) {
+    throw new Error(formatBackendError(error));
+  }
+};
+
+/** Atomically persist a history record and remove its active batch. */
+export const archiveBatchInDb = async (batchId: string, history: HistoryRecord): Promise<void> => {
+  if (!isTauriRuntime()) return;
+  try {
+    await invoke('archive_batch_command', { batchId, history: historyToRow(history) });
   } catch (error) {
     throw new Error(formatBackendError(error));
   }
@@ -398,19 +461,16 @@ export const parseImport = async ({
  * `targets` 转换为 Rust 侧期望的 `{ accountId, channelId, channelName, domain }` 结构。
  */
 export const createBackendLinks = async ({
-  apiKey,
   item,
   targets,
   ydisksAccountId,
 }: {
-  apiKey: string;
   item: QueueItem;
   targets: ShortLinkTarget[];
   ydisksAccountId: string;
 }): Promise<RustBackendCreationResult> => {
   try {
     return await invoke<RustBackendCreationResult>('create_backend_links_command', {
-      apiKey,
       accountId: ydisksAccountId,
       title: item.title,
       shareUrl: item.shareUrl ?? item.sourceUrl,
@@ -429,12 +489,26 @@ export const createBackendLinks = async ({
   }
 };
 
-/** 拉取 Ydisks 后台资产（账号 / 渠道 / 域名）。 */
-export const loadBackendAssets = async (
-  apiKey: string,
-): Promise<RustBackendAssetsSnapshot> => {
+export const createBackendOriginalLink = async (item: QueueItem, accountId: string): Promise<string> => {
   try {
-    return await invoke<RustBackendAssetsSnapshot>('fetch_backend_assets_command', { apiKey });
+    return await invoke<string>('create_original_link_command', { accountId, title: item.title, shareUrl: item.shareUrl ?? item.sourceUrl });
+  } catch (error) { throw new Error(formatBackendError(error)); }
+};
+
+export const createBackendShortLink = async (item: QueueItem, target: ShortLinkTarget) => {
+  if (!item.originalLinkId) throw new Error('缺少后台原始链接 ID');
+  try {
+    return await invoke<{ channelId: string; channelName: string; domain: string; shortUrl: string }>('create_short_link_command', {
+      title: item.title, originalLinkId: item.originalLinkId,
+      target: { accountId: target.ydisksAccountId, channelId: target.channelId, channelName: target.channelName, domain: target.domain },
+    });
+  } catch (error) { throw new Error(formatBackendError(error)); }
+};
+
+/** 拉取 Ydisks 后台资产（账号 / 渠道 / 域名）。 */
+export const loadBackendAssets = async (): Promise<RustBackendAssetsSnapshot> => {
+  try {
+    return await invoke<RustBackendAssetsSnapshot>('fetch_backend_assets_command');
   } catch (error) {
     if (isTauriRuntime()) {
       throw new Error(formatBackendError(error));
@@ -444,11 +518,9 @@ export const loadBackendAssets = async (
 };
 
 /** 查询短链额度汇总。 */
-export const loadBackendQuota = async (
-  apiKey: string,
-): Promise<RustBackendQuotaSummary> => {
+export const loadBackendQuota = async (): Promise<RustBackendQuotaSummary> => {
   try {
-    return await invoke<RustBackendQuotaSummary>('fetch_backend_quota_command', { apiKey });
+    return await invoke<RustBackendQuotaSummary>('fetch_backend_quota_command');
   } catch (error) {
     if (isTauriRuntime()) {
       throw new Error(formatBackendError(error));

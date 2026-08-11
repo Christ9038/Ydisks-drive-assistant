@@ -3,7 +3,7 @@
 //! 三步向导：选择网盘账号与目标目录 / 导入资源（逐条 / 粘贴 / CSV）/ 可选配置短链渠道并提交。
 //! 内部维护表单状态（平台、账号、目录、导入清单等），提交时通过 `onCreateBatch` 回传批次草稿。
 
-import { ChangeEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { FileInput, Play, Upload, Wand2 } from 'lucide-react';
 
 import { parseImport } from '../lib/bridge';
@@ -53,6 +53,7 @@ export function TasksPage({
   const [pasteText, setPasteText] = useState('');
   const [resources, setResources] = useState<ImportItem[]>([]);
   const [filterCount, setFilterCount] = useState(0);
+  const submittingRef = useRef(false);
 
   const groupedProviders = providerKeys.map((providerKey) => {
     const providerAccounts = accounts.filter((account) => account.provider === providerKey);
@@ -208,7 +209,9 @@ export function TasksPage({
   };
 
   const submitBatch = () => {
+    if (submittingRef.current) return;
     if (canSubmit && selectedProviderAccount) {
+      submittingRef.current = true;
       onCreateBatch({
         provider,
         providerAccountId,
@@ -223,6 +226,7 @@ export function TasksPage({
       });
       setResources([]);
       setFilterCount(0);
+      queueMicrotask(() => { submittingRef.current = false; });
     }
   };
 

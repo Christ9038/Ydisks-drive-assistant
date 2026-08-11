@@ -7,12 +7,13 @@ import { useState } from 'react';
 
 import { providerLabels } from '../lib/constants';
 import type { ProviderAccount } from '../types';
+import type { RustQuarkLoginResult } from '../lib/types';
 
 /**
  * Cookie 粘贴弹窗 hook。
  *
- * 返回弹窗渲染所需状态 + 三个处理函数。`submitCookieModal` 会用粘贴的 cookie
- * 调 `updateProviderAccount` 把账号标记为 connected。
+ * 返回弹窗渲染所需状态 + 三个处理函数。`submitCookieModal` 仅把用户本次输入
+ * 交给 Rust 校验/持久化，React 状态只接收脱敏结果。
  *
  * @param providerAccounts 当前账号列表（用于查找弹窗对应账号）
  * @param updateProviderAccount 账号更新回调（由账号域注入）
@@ -20,6 +21,9 @@ import type { ProviderAccount } from '../types';
 export function useCookieModal(
   providerAccounts: ProviderAccount[],
   updateProviderAccount: (accountId: string, updater: (account: ProviderAccount) => ProviderAccount) => void,
+  saveCredential: (accountId: string, credential: string) => Promise<RustQuarkLoginResult> = async () => ({
+    loginName: '', cookieCount: 0, hasCredential: true,
+  }),
 ) {
   const [cookieModalAccountId, setCookieModalAccountId] = useState<string | null>(null);
   const [cookieDraft, setCookieDraft] = useState('');
@@ -36,7 +40,7 @@ export function useCookieModal(
       return;
     }
     setCookieModalAccountId(accountId);
-    setCookieDraft(account.cookie ?? '');
+    setCookieDraft('');
     setCookieError('');
   };
 
@@ -71,17 +75,23 @@ export function useCookieModal(
 
     setCookieSaving(true);
     setCookieError('');
-    updateProviderAccount(account.id, (current) => ({
-      ...current,
-      cookie: cookieDraft,
-      status: 'connected',
-      loginName: `${providerLabels[current.provider]}已登录账号`,
-      pendingReason: undefined,
-      lastChecked: '刚刚',
-    }));
-    setCookieModalAccountId(null);
-    setCookieDraft('');
-    setCookieSaving(false);
+    try {
+      const result = await saveCredential(account.id, cookieDraft);
+      updateProviderAccount(account.id, (current) => ({
+        ...current,
+        hasCredential: result.hasCredential,
+        status: 'connected',
+        loginName: result.loginName || `${providerLabels[current.provider]}已登录账号`,
+        pendingReason: undefined,
+        lastChecked: '刚刚',
+      }));
+      setCookieModalAccountId(null);
+      setCookieDraft('');
+    } catch (error) {
+      setCookieError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCookieSaving(false);
+    }
   };
 
   return {

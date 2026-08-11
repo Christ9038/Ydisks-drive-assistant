@@ -19,6 +19,56 @@ pub struct AccountRow {
     pub credential: Option<String>,
 }
 
+/// 返回给前端的账号展示信息。凭证永不序列化到 WebView。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountView {
+    pub id: String,
+    pub provider: String,
+    pub display_name: String,
+    pub status: String,
+    pub login_name: String,
+    pub purpose: String,
+    pub last_checked: String,
+    pub pending_reason: Option<String>,
+    pub has_credential: bool,
+}
+
+impl From<AccountRow> for AccountView {
+    fn from(row: AccountRow) -> Self {
+        let has_credential = row
+            .credential
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty());
+        Self {
+            id: row.id,
+            provider: row.provider,
+            display_name: row.display_name,
+            status: row.status,
+            login_name: row.login_name,
+            purpose: row.purpose,
+            last_checked: row.last_checked,
+            pending_reason: row.pending_reason,
+            has_credential,
+        }
+    }
+}
+
+/// 前端允许修改的账号元数据，不包含 Cookie/Token。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountMetadata {
+    pub id: String,
+    pub provider: String,
+    pub display_name: String,
+    pub status: String,
+    pub login_name: String,
+    pub purpose: String,
+    pub last_checked: String,
+    #[serde(default)]
+    pub pending_reason: Option<String>,
+}
+
 /// 批次持久化行。items / logs / short_link_targets 以 JSON 文本列存储。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

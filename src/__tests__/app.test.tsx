@@ -18,8 +18,15 @@ const bridge = vi.hoisted(() => ({
   openXunleiReviewWindow: vi.fn(() => Promise.resolve()),
   closeXunleiReviewWindow: vi.fn(() => Promise.resolve()),
   loginXunleiPassword: vi.fn(() => Promise.resolve()),
-  captureProviderLogin: vi.fn(() => Promise.resolve({ cookie: 'ck-new', loginName: 'login-user', cookieCount: 3 })),
-  checkProviderLogin: vi.fn(() => Promise.resolve({ cookie: 'ck-checked', loginName: 'checked-user', cookieCount: 3 })),
+  captureProviderLogin: vi.fn(() => Promise.resolve({ hasCredential: true, loginName: 'login-user', cookieCount: 3 })),
+  checkProviderLogin: vi.fn(() => Promise.resolve({ hasCredential: true, loginName: 'checked-user', cookieCount: 3 })),
+  saveProviderCredential: vi.fn(() => Promise.resolve({ hasCredential: true, loginName: 'saved-user', cookieCount: 3 })),
+  clearProviderCredentialInDb: vi.fn(() => Promise.resolve()),
+  loadBusinessSettings: vi.fn(() => Promise.resolve({ transferIntervals: { quark: 4, baidu: 4, xunlei: 4 }, hasApiKey: false })),
+  importLegacyBusinessSettings: vi.fn(() => Promise.resolve({ transferIntervals: { quark: 4, baidu: 4, xunlei: 4 }, hasApiKey: false })),
+  saveTransferIntervals: vi.fn((value) => Promise.resolve(value)),
+  configureBackendApiKey: vi.fn(() => Promise.resolve({ maxLinks: 100, usedLinks: 0, remainingLinks: 100, shortlinkAccessStatus: 'ACTIVE' })),
+  clearBackendApiKey: vi.fn(() => Promise.resolve()),
   listProviderAccountsFromDb: vi.fn(() => Promise.resolve([] as ProviderAccount[])),
   upsertProviderAccountToDb: vi.fn(() => Promise.resolve()),
   deleteProviderAccountFromDb: vi.fn(() => Promise.resolve()),
@@ -66,6 +73,7 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     bridge.isTauriRuntime.mockReturnValue(false);
+    bridge.loadBusinessSettings.mockResolvedValue({ transferIntervals: { quark: 4, baidu: 4, xunlei: 4 }, hasApiKey: false });
     localStorage.clear();
   });
 
@@ -89,6 +97,17 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
     expect(screen.getByText('新建批量转存')).toBeTruthy();
   });
 
+  it('设置页保存按平台间隔并把低于 3 秒的输入提升为 3 秒', async () => {
+    renderApp();
+    fireEvent.click(screen.getByRole('button', { name: /^设置$/ }));
+    const input = screen.getByLabelText('夸克转存间隔') as HTMLInputElement;
+    expect(input.value).toBe('4');
+    fireEvent.change(input, { target: { value: '1' } });
+    expect(input.value).toBe('3');
+    await waitFor(() => expect(bridge.saveTransferIntervals).toHaveBeenCalledWith({ quark: 3, baidu: 4, xunlei: 4 }));
+    expect(localStorage.getItem('ydisks.transfer.intervals.v1')).toBeNull();
+  });
+
   it('任务页「开启去重」勾选切换 dedupeEnabled（onToggleDedupe L508）', () => {
     renderApp();
     const checkbox = screen.getByRole('checkbox', { name: '开启去重' }) as HTMLInputElement;
@@ -101,16 +120,17 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
   });
 
   it('创建批次后切换到状态页（onBatchCreated L252）', async () => {
-    // 浏览器模式从 localStorage 读取账号：预置一个已连接的夸克账号
-    localStorage.setItem('ydisks.transfer.providerAccounts.v2', JSON.stringify([{
-      id: 'q-conn', provider: 'quark', status: 'connected', cookie: 'ck-1',
+    bridge.isTauriRuntime.mockReturnValue(true);
+    bridge.listProviderAccountsFromDb.mockResolvedValue([{
+      id: 'q-conn', provider: 'quark', status: 'connected', hasCredential: true,
       displayName: '夸克A', platformName: '夸克网盘', loginName: 'q@x', purpose: '转存', lastChecked: '刚刚',
-    }]));
+    }]);
     bridge.parseImport.mockResolvedValue({
       accepted: [{ title: '资源A', sourceUrl: 'https://pan.quark.cn/s/abc', provider: 'quark' }],
       filtered: 0,
     });
     renderApp();
+    await waitFor(() => expect(bridge.listProviderAccountsFromDb).toHaveBeenCalled());
     // 逐条添加资源
     fireEvent.change(screen.getByLabelText('标题'), { target: { value: '资源A' } });
     fireEvent.change(screen.getByLabelText('网盘链接'), { target: { value: 'https://pan.quark.cn/s/abc' } });
@@ -202,7 +222,7 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
     fireEvent.keyDown(screen.getByLabelText('账号备注'), { key: 'Enter' });
     await waitFor(() => expect(screen.getByText('账号B')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: '清理会话' }));
-    expect(screen.getByText('登录过期')).toBeTruthy();
+    await waitFor(() => expect(screen.getByText('登录过期')).toBeTruthy());
   });
 
   it('设置页：删除账号从列表移除', async () => {
@@ -224,7 +244,7 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
   });
 
   it('API Key 检测失败显示错误 Toast', async () => {
-    bridge.loadBackendQuota.mockRejectedValueOnce(new Error('无效的 API Key'));
+    bridge.configureBackendApiKey.mockRejectedValueOnce(new Error('无效的 API Key'));
     renderApp();
     fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'bad' } });
     fireEvent.click(screen.getByRole('button', { name: '检测' }));
@@ -235,7 +255,7 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
     renderApp();
     fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'k' } });
     fireEvent.click(screen.getByRole('button', { name: '清除 API Key' }));
-    expect((screen.getByPlaceholderText('API Key') as HTMLInputElement).value).toBe('');
+    await waitFor(() => expect((screen.getByPlaceholderText('API Key') as HTMLInputElement).value).toBe(''));
   });
 
   it('设置页「清除密钥」弹出确认弹窗，确认后清空', async () => {
@@ -266,7 +286,7 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
   });
 
   it('Toast 在操作触发时渲染', async () => {
-    bridge.loadBackendQuota.mockRejectedValueOnce(new Error('boom'));
+    bridge.configureBackendApiKey.mockRejectedValueOnce(new Error('boom'));
     renderApp();
     fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'x' } });
     fireEvent.click(screen.getByRole('button', { name: '检测' }));
@@ -374,7 +394,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
   });
 
   it('启动时从 SQLite 加载账号', async () => {
-    const acc = { id: 'db1', provider: 'quark' as const, platformName: '夸克网盘', displayName: 'DB账号', status: 'connected' as const, loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'ck' };
+    const acc = { id: 'db1', provider: 'quark' as const, platformName: '夸克网盘', displayName: 'DB账号', status: 'connected' as const, loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true };
     bridge.listProviderAccountsFromDb.mockResolvedValue([acc]);
     renderApp();
     await waitFor(() => expect(bridge.listProviderAccountsFromDb).toHaveBeenCalled());
@@ -384,11 +404,11 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
   });
 
   it('DB 空且 localStorage 有旧账号时触发迁移', async () => {
-    const legacy = [{ id: 'legacy1', provider: 'quark', platformName: '夸克网盘', displayName: '旧账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'ck' }];
+    const legacy = [{ id: 'legacy1', provider: 'quark', platformName: '夸克网盘', displayName: '旧账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true }];
     localStorage.setItem('ydisks.transfer.providerAccounts.v2', JSON.stringify(legacy));
     bridge.listProviderAccountsFromDb
       .mockResolvedValueOnce([]) // 首次：DB 空
-      .mockResolvedValueOnce([{ id: 'legacy1', provider: 'quark', platformName: '夸克网盘', displayName: '迁移账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'ck' }]); // 迁移后重载
+      .mockResolvedValueOnce([{ id: 'legacy1', provider: 'quark', platformName: '夸克网盘', displayName: '迁移账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true }]); // 迁移后重载
     renderApp();
     await waitFor(() => expect(bridge.importLegacyAccountsToDb).toHaveBeenCalledTimes(1), { timeout: 2000 });
     expect(localStorage.getItem('ydisks.transfer.providerAccounts.v2')).toBeNull();
@@ -396,7 +416,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
 
   it('检测已连接账号调用 checkProviderLogin', async () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([
-      { id: 'acc-conn', provider: 'quark', platformName: '夸克网盘', displayName: '已连接账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'ck' },
+      { id: 'acc-conn', provider: 'quark', platformName: '夸克网盘', displayName: '已连接账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true },
     ]);
     renderApp();
     await waitFor(() => expect(bridge.listProviderAccountsFromDb).toHaveBeenCalled());
@@ -422,7 +442,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
 
   it('provider-login-complete 事件更新账号并提示', async () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([
-      { id: 'acc-login', provider: 'quark', platformName: '夸克网盘', displayName: '待登录', status: 'manual_required', loginName: '未登录', purpose: '转存', lastChecked: '刚刚' },
+      { id: 'acc-login', provider: 'quark', platformName: '夸克网盘', displayName: '待登录', status: 'manual_required', loginName: '未登录', purpose: '转存', lastChecked: '刚刚', hasCredential: false },
     ]);
     let handler: ((e: { payload: unknown }) => void) | undefined;
     eventApi.listen.mockImplementationOnce(async (_event: string, cb: (e: { payload: unknown }) => void) => {
@@ -432,7 +452,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
     renderApp();
     await waitFor(() => expect(eventApi.listen).toHaveBeenCalledWith('provider-login-complete', expect.any(Function)));
     await act(async () => {
-      handler?.({ payload: { accountId: 'acc-login', provider: 'quark', result: { cookie: 'ck', loginName: '登录用户', cookieCount: 1 } } });
+      handler?.({ payload: { accountId: 'acc-login', provider: 'quark', result: { hasCredential: true, loginName: '登录用户', cookieCount: 1 } } });
     });
     await waitFor(() => expect(screen.getByText('夸克账号已登录')).toBeTruthy());
   });
@@ -501,7 +521,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
 
   it('检测账号失败（普通错误）回写错误到账号', async () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([
-      { id: 'acc-conn', provider: 'quark', platformName: '夸克网盘', displayName: '已连接账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'ck' },
+      { id: 'acc-conn', provider: 'quark', platformName: '夸克网盘', displayName: '已连接账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true },
     ]);
     bridge.checkProviderLogin.mockRejectedValueOnce(new Error('登录态已失效'));
     renderApp();
@@ -514,7 +534,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
 
   it('检测账号失败（请先打开）提示重新登录文案', async () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([
-      { id: 'acc-conn', provider: 'quark', platformName: '夸克网盘', displayName: '已连接账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'ck' },
+      { id: 'acc-conn', provider: 'quark', platformName: '夸克网盘', displayName: '已连接账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true },
     ]);
     bridge.checkProviderLogin.mockRejectedValueOnce(new Error('请先打开登录窗口'));
     renderApp();
@@ -526,7 +546,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
 
   it('检测无 cookie 账号走 captureProviderLogin', async () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([
-      { id: 'acc-manual', provider: 'quark', platformName: '夸克网盘', displayName: '待捕获账号', status: 'manual_required', loginName: '未登录', purpose: '转存', lastChecked: '刚刚', pendingReason: '本地会话已清理' },
+      { id: 'acc-manual', provider: 'quark', platformName: '夸克网盘', displayName: '待捕获账号', status: 'manual_required', loginName: '未登录', purpose: '转存', lastChecked: '刚刚', pendingReason: '本地会话已清理', hasCredential: false },
     ]);
     renderApp();
     fireEvent.click(screen.getByRole('button', { name: /^设置$/ }));
@@ -554,9 +574,9 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
 
   it('迅雷已连接账号点击检测成功 -> connected 并重置二维码弹窗', async () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([
-      { id: 'x-conn', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷已连接', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'ck' },
+      { id: 'x-conn', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷已连接', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true },
     ]);
-    bridge.checkProviderLogin.mockResolvedValueOnce({ cookie: 'ck-new', loginName: '迅雷用户', cookieCount: 2 });
+    bridge.checkProviderLogin.mockResolvedValueOnce({ hasCredential: true, loginName: '迅雷用户', cookieCount: 2 });
     renderApp();
     await waitFor(() => expect(bridge.listProviderAccountsFromDb).toHaveBeenCalled());
     fireEvent.click(screen.getByRole('button', { name: /^设置$/ }));
@@ -568,7 +588,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
 
   it('迅雷账号检测遇到授权待完成 -> 提示密码登录', async () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([
-      { id: 'x-conn', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷A', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'ck' },
+      { id: 'x-conn', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷A', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true },
     ]);
     bridge.checkProviderLogin.mockRejectedValueOnce(new Error('authorization_pending'));
     renderApp();
@@ -581,7 +601,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
 
   it('迅雷账号检测遇到「请先打开」-> 提示重新登录文案', async () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([
-      { id: 'x-conn', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷B', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'ck' },
+      { id: 'x-conn', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷B', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true },
     ]);
     bridge.checkProviderLogin.mockRejectedValueOnce(new Error('请先打开登录窗口'));
     renderApp();
@@ -594,7 +614,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
 
   it('迅雷账号检测遇到普通错误 -> 回写错误并设置二维码错误', async () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([
-      { id: 'x-conn', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷C', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'ck' },
+      { id: 'x-conn', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷C', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true },
     ]);
     bridge.checkProviderLogin.mockRejectedValueOnce(new Error('网络异常'));
     renderApp();
@@ -607,7 +627,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
 
   it('迅雷待登录账号点击登录 -> 打开密码登录弹窗', async () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([
-      { id: 'x-manual', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷待登录', status: 'manual_required', loginName: '未登录', purpose: '转存', lastChecked: '刚刚', pendingReason: '请填写迅雷账号和密码登录。' },
+      { id: 'x-manual', provider: 'xunlei', platformName: '迅雷网盘', displayName: '迅雷待登录', status: 'manual_required', loginName: '未登录', purpose: '转存', lastChecked: '刚刚', pendingReason: '请填写迅雷账号和密码登录。', hasCredential: false },
     ]);
     renderApp();
     await waitFor(() => expect(bridge.listProviderAccountsFromDb).toHaveBeenCalled());
@@ -631,7 +651,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
     const { unmount } = renderApp();
     unmount();
     // 卸载后 resolve -> 走 cancelled 提前返回分支
-    await act(async () => { resolveLoad([{ id: 'late', provider: 'quark', platformName: '夸克网盘', displayName: '迟到', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'ck' }]); });
+    await act(async () => { resolveLoad([{ id: 'late', provider: 'quark', platformName: '夸克网盘', displayName: '迟到', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true }]); });
   });
 
   it('同步账号到 SQLite 失败时静默（console.warn）', async () => {
@@ -648,8 +668,8 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
 
   it('删除账号触发 deleteProviderAccountFromDb 清理旧记录', async () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([
-      { id: 'del-1', provider: 'quark', platformName: '夸克网盘', displayName: '保留账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'ck' },
-      { id: 'del-2', provider: 'baidu', platformName: '百度网盘', displayName: '删除账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'ck' },
+      { id: 'del-1', provider: 'quark', platformName: '夸克网盘', displayName: '保留账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true },
+      { id: 'del-2', provider: 'baidu', platformName: '百度网盘', displayName: '删除账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true },
     ]);
     renderApp();
     await waitFor(() => expect(bridge.upsertProviderAccountToDb).toHaveBeenCalled());
@@ -661,7 +681,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
 
   it('加载到 legacy demo 账号 id -> 过滤后重置账号列表', async () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([
-      { id: 'quark-main', provider: 'quark', platformName: '夸克网盘', displayName: '演示账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'ck' },
+      { id: 'quark-main', provider: 'quark', platformName: '夸克网盘', displayName: '演示账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true },
     ]);
     renderApp();
     // 演示账号被过滤后从列表移除
@@ -670,7 +690,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
 
   it('任务页目录加载遇到凭证错误 -> 标记账号 manual_required', async () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([
-      { id: 'acc-conn', provider: 'quark', platformName: '夸克网盘', displayName: '已连接', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'ck' },
+      { id: 'acc-conn', provider: 'quark', platformName: '夸克网盘', displayName: '已连接', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true },
     ]);
     bridge.listProviderFolders.mockRejectedValue(new Error('登录态失效，请重新登录'));
     renderApp();
@@ -686,7 +706,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
 
   it('provider-login-complete 事件命中不存在账号 -> 列表不变', async () => {
     bridge.listProviderAccountsFromDb.mockResolvedValue([
-      { id: 'acc-real', provider: 'quark', platformName: '夸克网盘', displayName: '真实账号', status: 'manual_required', loginName: '未登录', purpose: '转存', lastChecked: '刚刚' },
+      { id: 'acc-real', provider: 'quark', platformName: '夸克网盘', displayName: '真实账号', status: 'manual_required', loginName: '未登录', purpose: '转存', lastChecked: '刚刚', hasCredential: false },
     ]);
     let handler: ((e: { payload: unknown }) => void) | undefined;
     eventApi.listen.mockImplementationOnce(async (_event: string, cb: (e: { payload: unknown }) => void) => {
@@ -696,7 +716,7 @@ describe('App - 桌面模式（isTauriRuntime=true）', () => {
     renderApp();
     await waitFor(() => expect(eventApi.listen).toHaveBeenCalledWith('provider-login-complete', expect.any(Function)));
     await act(async () => {
-      handler?.({ payload: { accountId: 'not-exist', provider: 'quark', result: { cookie: 'ck', loginName: 'x', cookieCount: 1 } } });
+      handler?.({ payload: { accountId: 'not-exist', provider: 'quark', result: { hasCredential: true, loginName: 'x', cookieCount: 1 } } });
     });
     // 真实账号仍保持原状态（未命中）
     fireEvent.click(screen.getByRole('button', { name: /^设置$/ }));

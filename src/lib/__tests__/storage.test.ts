@@ -1,132 +1,79 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   loadStoredProviderAccounts,
-  saveStoredProviderAccounts,
   loadStoredThemeMode,
+  loadLegacyBusinessSettings,
+  clearLegacyBusinessSettings,
+  normalizeTransferIntervals,
   resolveThemeMode,
-  loadStoredApiKey,
-  saveStoredApiKey,
-  clearStoredApiKey,
 } from '../storage';
-import type { ProviderAccount } from '../../types';
 
-const account: ProviderAccount = {
-  id: 'quark-1',
-  provider: 'quark',
-  platformName: '夸克网盘',
-  displayName: '主账号',
-  status: 'connected',
-  loginName: 'user',
-  purpose: '',
-  lastChecked: '-',
-  cookie: 'c',
-};
-
-describe('API Key 持久化', () => {
-  it('保存后可读取，清除后为空', () => {
-    saveStoredApiKey('secret-key');
-    expect(loadStoredApiKey()).toBe('secret-key');
-    clearStoredApiKey();
-    expect(loadStoredApiKey()).toBe('');
-  });
-  it('未保存时返回空串', () => {
-    expect(loadStoredApiKey()).toBe('');
+describe('纯配置归一化', () => {
+  it('非法值回落默认值，低于 3 秒强制为 3 秒', () => {
+    expect(normalizeTransferIntervals({ quark: 1, baidu: '8', xunlei: 'bad' }))
+      .toEqual({ quark: 3, baidu: 8, xunlei: 4 });
   });
 });
 
-describe('主题模式持久化', () => {
-  it('未保存时返回 system', () => {
+describe('主题模式（唯一允许的前端持久化配置）', () => {
+  it('默认 system，合法值可读取，非法值回落', () => {
     expect(loadStoredThemeMode()).toBe('system');
-  });
-  it('保存后可读取（直接写 localStorage 模拟 App 侧保存）', () => {
-    window.localStorage.setItem('ydisks.transfer.themeMode.v1', 'dark');
+    localStorage.setItem('ydisks.transfer.themeMode.v1', 'dark');
     expect(loadStoredThemeMode()).toBe('dark');
-  });
-  it('非法值回落 system', () => {
-    window.localStorage.setItem('ydisks.transfer.themeMode.v1', 'pink');
+    localStorage.setItem('ydisks.transfer.themeMode.v1', 'pink');
     expect(loadStoredThemeMode()).toBe('system');
   });
-});
 
-describe('resolveThemeMode', () => {
-  it('light/dark 直接返回', () => {
+  it('system 按系统主题解析', () => {
     expect(resolveThemeMode('light')).toBe('light');
     expect(resolveThemeMode('dark')).toBe('dark');
-  });
-  it('system 跟随 matchMedia（setup 中默认 false → light）', () => {
-    expect(resolveThemeMode('system')).toBe('light');
-  });
-});
-
-describe('网盘账号持久化', () => {
-  it('保存后可读取并归一化', () => {
-    saveStoredProviderAccounts([account]);
-    const loaded = loadStoredProviderAccounts();
-    expect(loaded).toHaveLength(1);
-    expect(loaded[0].id).toBe('quark-1');
-    expect(loaded[0].cookie).toBe('c');
-  });
-
-  it('保存时剔除 demo 账号', () => {
-    const demo: ProviderAccount = { ...account, id: 'quark-main' };
-    saveStoredProviderAccounts([account, demo]);
-    const loaded = loadStoredProviderAccounts();
-    expect(loaded).toHaveLength(1);
-    expect(loaded[0].id).toBe('quark-1');
-  });
-
-  it('无数据时返回空数组', () => {
-    expect(loadStoredProviderAccounts()).toEqual([]);
-  });
-});
-
-describe('resolveThemeMode system + dark matchMedia', () => {
-  it('system 且 prefers-color-scheme: dark -> dark', () => {
     const spy = vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
     expect(resolveThemeMode('system')).toBe('dark');
     spy.mockRestore();
   });
 });
 
-describe('SSR / 异常降级', () => {
-  it('无 window 时安全降级', () => {
+describe('旧账号一次性迁移读取', () => {
+  it('读取并归一化旧账号，保留迁移所需 credential', () => {
+    localStorage.setItem('ydisks.transfer.providerAccounts.v2', JSON.stringify([{
+      id: 'q1', provider: 'quark', displayName: '旧账号', status: 'connected', cookie: 'secret-cookie',
+    }]));
+    const accounts = loadStoredProviderAccounts();
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0].hasCredential).toBe(true);
+    expect((accounts[0] as typeof accounts[0] & { cookie?: string }).cookie).toBe('secret-cookie');
+  });
+
+  it('无数据、损坏数据及读取异常均返回空数组', () => {
+    expect(loadStoredProviderAccounts()).toEqual([]);
+    localStorage.setItem('ydisks.transfer.providerAccounts.v2', '{bad');
+    expect(loadStoredProviderAccounts()).toEqual([]);
+    const getter = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => { throw new Error('denied'); });
+    expect(loadStoredProviderAccounts()).toEqual([]);
+    getter.mockRestore();
+  });
+
+  it('SSR 安全降级', () => {
     vi.stubGlobal('window', undefined);
     try {
       expect(loadStoredProviderAccounts()).toEqual([]);
       expect(loadStoredThemeMode()).toBe('system');
-      expect(loadStoredApiKey()).toBe('');
       expect(resolveThemeMode('system')).toBe('light');
-      saveStoredProviderAccounts([account]);
-      saveStoredApiKey('x');
-      clearStoredApiKey();
     } finally {
       vi.unstubAllGlobals();
     }
   });
+});
 
-  it('localStorage 读取抛错时降级返回默认值', () => {
-    const getter = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
-      throw new Error('denied');
+describe('旧业务设置一次性迁移读取', () => {
+  it('读取旧 API Key/间隔并在迁移成功后清理', () => {
+    localStorage.setItem('ydisks.transfer.apiKey.v1', ' old-key ');
+    localStorage.setItem('ydisks.transfer.intervals.v1', JSON.stringify({ quark: 1, baidu: 6, xunlei: 7 }));
+    expect(loadLegacyBusinessSettings()).toEqual({
+      apiKey: 'old-key', transferIntervals: { quark: 3, baidu: 6, xunlei: 7 },
     });
-    try {
-      expect(loadStoredApiKey()).toBe('');
-      expect(loadStoredThemeMode()).toBe('system');
-      expect(loadStoredProviderAccounts()).toEqual([]);
-    } finally {
-      getter.mockRestore();
-    }
-  });
-
-  it('localStorage 写入 / 删除抛错时不抛出', () => {
-    const setter = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
-      throw new Error('quota');
-    });
-    expect(() => saveStoredApiKey('x')).not.toThrow();
-    setter.mockRestore();
-    const remover = vi.spyOn(window.localStorage, 'removeItem').mockImplementation(() => {
-      throw new Error('denied');
-    });
-    expect(() => clearStoredApiKey()).not.toThrow();
-    remover.mockRestore();
+    clearLegacyBusinessSettings();
+    expect(localStorage.getItem('ydisks.transfer.apiKey.v1')).toBeNull();
+    expect(localStorage.getItem('ydisks.transfer.intervals.v1')).toBeNull();
   });
 });

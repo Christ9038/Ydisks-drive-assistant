@@ -15,10 +15,11 @@ import type {
 import { providerKeys } from './constants';
 import { isActiveQueueStatus, isBlockingStatus, platformNameOf } from './guards';
 import type { BatchDraft, BatchLogEntry, BatchRecord, ParsedResource } from './types';
+import { uuidv7 } from './uuid';
 
 /** 创建一个未登录的新账号对象（id 由时间戳+随机串保证唯一）。 */
 export const createProviderAccount = (provider: ProviderKey, displayName: string): ProviderAccount => ({
-  id: `${provider}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  id: uuidv7(),
   provider,
   platformName: platformNameOf(provider),
   displayName,
@@ -27,11 +28,12 @@ export const createProviderAccount = (provider: ProviderKey, displayName: string
   purpose: '',
   lastChecked: '-',
   pendingReason: '尚未登录',
+  hasCredential: false,
 });
 
 /** 由解析资源生成导入项（默认 valid）。 */
 export const buildImportItem = (resource: ParsedResource, accountId: string, index: number): ImportItem => ({
-  id: `I-${Date.now()}-${index}`,
+  id: uuidv7(),
   provider: resource.provider,
   accountId,
   sourceUrl: resource.sourceUrl,
@@ -52,7 +54,7 @@ export const createBatchLog = (
   message: string,
   itemTitle?: string,
 ): BatchLogEntry => ({
-  id: `L-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  id: uuidv7(),
   time: formatNow(),
   tone,
   message,
@@ -60,11 +62,7 @@ export const createBatchLog = (
 });
 
 /** 生成批次 ID：`B-YYYYMMDD-HHMMSS`。 */
-export const generateBatchId = () => {
-  const now = new Date();
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `B-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-};
+export const generateBatchId = uuidv7;
 
 /**
  * 平台串行队列规整：每个平台若无阻塞批次，则把队首排队批次提升为 running；
@@ -81,16 +79,22 @@ export const normalizePlatformQueues = (batches: BatchRecord[]) => {
 
     if (!hasBlockingBatch && queuedBatches.length > 0) {
       const promoted = queuedBatches[0];
-      promoted.status = 'running';
-      promoted.queuePosition = undefined;
-      promoted.currentStep = `串行处理第 ${promoted.currentIndex}/${promoted.total} 条`;
+      const promotedIndex = next.findIndex((batch) => batch.id === promoted.id);
+      next[promotedIndex] = {
+        ...promoted,
+        status: 'running',
+        queuePosition: undefined,
+        currentStep: `串行处理第 ${promoted.currentIndex}/${promoted.total} 条`,
+      };
     }
 
-    next
-      .filter((batch) => batch.provider === provider && batch.status === 'queued')
-      .forEach((batch, index) => {
-        batch.queuePosition = index + 1;
-      });
+    let queuePosition = 0;
+    next.forEach((batch, index) => {
+      if (batch.provider === provider && batch.status === 'queued') {
+        queuePosition += 1;
+        next[index] = batch.queuePosition === queuePosition ? batch : { ...batch, queuePosition };
+      }
+    });
   });
 
   return next;

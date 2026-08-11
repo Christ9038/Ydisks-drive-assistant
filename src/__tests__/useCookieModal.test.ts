@@ -12,16 +12,16 @@ const account = (over: Partial<ProviderAccount> = {}): ProviderAccount => ({
   loginName: '',
   purpose: '转存',
   lastChecked: '',
-  cookie: 'old-cookie',
+  hasCredential: true,
   ...over,
 });
 
 describe('useCookieModal', () => {
-  it('打开弹窗预填已有 cookie', () => {
+  it('打开弹窗不回显 Rust 保存的 cookie', () => {
     const { result } = renderHook(() => useCookieModal([account()], vi.fn()));
     act(() => result.current.openCookieModal('a1'));
     expect(result.current.cookieModalAccount?.id).toBe('a1');
-    expect(result.current.cookieDraft).toBe('old-cookie');
+    expect(result.current.cookieDraft).toBe('');
     expect(result.current.isCookieModalOpenFor('a1')).toBe(true);
   });
 
@@ -33,7 +33,7 @@ describe('useCookieModal', () => {
   });
 
   it('账号无 cookie 时预填空串', () => {
-    const { result } = renderHook(() => useCookieModal([account({ cookie: undefined })], vi.fn()));
+    const { result } = renderHook(() => useCookieModal([account({ hasCredential: false })], vi.fn()));
     act(() => result.current.openCookieModal('a1'));
     expect(result.current.cookieDraft).toBe('');
   });
@@ -64,7 +64,7 @@ describe('useCookieModal', () => {
 
   it('提交空 cookie 时设置错误', async () => {
     const update = vi.fn();
-    const { result } = renderHook(() => useCookieModal([account({ cookie: undefined })], update));
+    const { result } = renderHook(() => useCookieModal([account({ hasCredential: false })], update));
     act(() => result.current.openCookieModal('a1'));
     await act(async () => {
       await result.current.submitCookieModal();
@@ -85,7 +85,7 @@ describe('useCookieModal', () => {
     // 验证 updater 逻辑
     const updater = update.mock.calls[0][1];
     const updated = updater(account());
-    expect(updated.cookie).toBe('new-cookie');
+    expect(updated.hasCredential).toBe(true);
     expect(updated.status).toBe('connected');
     expect(updated.loginName).toBe('夸克已登录账号');
     expect(updated.pendingReason).toBeUndefined();
@@ -108,7 +108,7 @@ describe('useCookieModal', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it('saving 态禁止关闭（updateProviderAccount 抛错时 saving 残留）', async () => {
+  it('更新展示状态异常时也会结束 saving 并显示错误', async () => {
     const update = vi.fn(() => {
       throw new Error('boom');
     });
@@ -116,12 +116,12 @@ describe('useCookieModal', () => {
     act(() => result.current.openCookieModal('a1'));
     act(() => result.current.setCookieDraft('new-cookie'));
     await act(async () => {
-      await expect(result.current.submitCookieModal()).rejects.toThrow('boom');
+      await result.current.submitCookieModal();
     });
-    // 抛错导致 saving 残留为 true，此时关闭应被阻止
-    expect(result.current.cookieSaving).toBe(true);
+    expect(result.current.cookieSaving).toBe(false);
+    expect(result.current.cookieError).toBe('boom');
     act(() => result.current.closeCookieModal());
-    expect(result.current.cookieDraft).toBe('new-cookie');
+    expect(result.current.cookieDraft).toBe('');
     // reset 仍可强制清空
     act(() => result.current.resetCookieModal());
     expect(result.current.cookieModalAccount).toBeUndefined();

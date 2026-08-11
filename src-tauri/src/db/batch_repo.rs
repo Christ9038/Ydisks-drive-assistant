@@ -100,6 +100,23 @@ pub fn save_history(conn: &Connection, history: &HistoryRow) -> Result<(), Backe
     Ok(())
 }
 
+/// Atomically move a completed/cancelled batch into history.
+pub fn archive_batch(
+    conn: &mut Connection,
+    batch_id: &str,
+    history: &HistoryRow,
+) -> Result<(), BackendClientError> {
+    let tx = conn
+        .transaction()
+        .map_err(|e| backend_error("db", -7, format!("开始归档事务失败：{e}")))?;
+    save_history(&tx, history)?;
+    delete_batch(&tx, batch_id)?;
+    tx.commit()
+        .map_err(|e| backend_error("db", -7, format!("提交归档事务失败：{e}")))?;
+    tracing::info!(batch_id, history_id = %history.id, status = %history.status, "批次已原子归档");
+    Ok(())
+}
+
 /// 读取全部历史记录，按 `created_at` 倒序返回。
 pub fn list_history(conn: &Connection) -> Result<Vec<HistoryRow>, BackendClientError> {
     let mut stmt = conn
@@ -229,5 +246,25 @@ mod tests {
         let listed = list_history(&conn).unwrap();
         assert_eq!(1, listed.len());
         assert_eq!("success", listed[0].status);
+    }
+
+    #[test]
+    fn archive_batch_should_save_history_and_delete_batch_atomically() {
+        let mut conn = mem_conn();
+        save_batch(&conn, &sample_batch("b1")).unwrap();
+        let history = HistoryRow {
+            id: "b1".into(),
+            batch_id: "b1".into(),
+            status: "success".into(),
+            created_at: now_iso(),
+            total: 1,
+            completed: 1,
+            failed: 0,
+            items_json: "[]".into(),
+            logs_json: "[]".into(),
+        };
+        archive_batch(&mut conn, "b1", &history).unwrap();
+        assert!(list_batches(&conn).unwrap().is_empty());
+        assert_eq!(1, list_history(&conn).unwrap().len());
     }
 }

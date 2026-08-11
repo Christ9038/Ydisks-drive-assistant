@@ -7,7 +7,7 @@ import type { ProviderAccount, QueueItem, ShortLinkResult } from '../types';
 import type { BatchRecord, HistoryRecord } from '../lib/types';
 
 const account = (over: Partial<ProviderAccount> = {}): ProviderAccount => ({
-  id: 'acc-1', provider: 'quark', platformName: '夸克网盘', displayName: '主账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', cookie: 'c', ...over,
+  id: 'acc-1', provider: 'quark', platformName: '夸克网盘', displayName: '主账号', status: 'connected', loginName: 'u', purpose: '转存', lastChecked: '刚刚', hasCredential: true, ...over,
 });
 
 const queueItem = (over: Partial<QueueItem> = {}): QueueItem => ({

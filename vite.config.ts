@@ -33,6 +33,12 @@ export default defineConfig({
         'src/lib/types.ts',
       ],
       all: true,
+      thresholds: {
+        statements: 95,
+        branches: 90,
+        functions: 95,
+        lines: 95,
+      },
     },
   },
 });
