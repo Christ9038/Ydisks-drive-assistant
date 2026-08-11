@@ -18,6 +18,8 @@ import { ImportTable } from '../components/tables';
 import { DirectorySelectField, FolderPickerModal } from '../components/modals';
 import { ShortLinkTargets } from '../components/fields';
 
+const TRANSFER_ONLY_ACCOUNT_ID = '__transfer_only__';
+
 /** 任务页：三步向导（选账号 → 导入资源 → 可选配短链执行）创建批量转存批次。 */
 export function TasksPage({
   accounts,
@@ -45,7 +47,7 @@ export function TasksPage({
 }) {
   const [provider, setProvider] = useState<ProviderKey>('quark');
   const [providerAccountId, setProviderAccountId] = useState(() => accounts.find((account) => account.provider === 'quark' && isProviderAccountUsable(account))?.id ?? '');
-  const [ydisksAccountId, setYdisksAccountId] = useState(ydisksAccounts[0]?.id ?? '');
+  const [ydisksAccountId, setYdisksAccountId] = useState(ydisksAccounts[0]?.id ?? TRANSFER_ONLY_ACCOUNT_ID);
   const [targetFolderRef, setTargetFolderRef] = useState(defaultFolderRefs.quark);
   const [targetFolderName, setTargetFolderName] = useState('根目录');
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
@@ -57,6 +59,7 @@ export function TasksPage({
   const [resources, setResources] = useState<ImportItem[]>([]);
   const [filterCount, setFilterCount] = useState(0);
   const submittingRef = useRef(false);
+  const transferOnlySelectedRef = useRef(false);
 
   const groupedProviders = providerKeys.map((providerKey) => {
     const providerAccounts = accounts.filter((account) => account.provider === providerKey);
@@ -97,9 +100,12 @@ export function TasksPage({
 
   // 切换网盘平台或后台账号列表变化时，确保选中的后台账号仍属于当前平台。
   useEffect(() => {
+    if (transferOnlySelectedRef.current) {
+      return;
+    }
     setYdisksAccountId((current) => (providerYdisksAccounts.some((account) => account.id === current)
       ? current
-      : providerYdisksAccounts[0]?.id ?? ''));
+      : providerYdisksAccounts[0]?.id ?? TRANSFER_ONLY_ACCOUNT_ID));
   }, [providerYdisksAccounts]);
 
   const availableDomainOptions = useMemo(() => {
@@ -119,13 +125,16 @@ export function TasksPage({
     )));
   }, [availableDomainOptions, defaultDomainName]);
 
-  const selectedYdisksAccount = providerYdisksAccounts.find((account) => account.id === ydisksAccountId) ?? providerYdisksAccounts[0];
+  const transferOnly = ydisksAccountId === TRANSFER_ONLY_ACCOUNT_ID;
+  const selectedYdisksAccount = transferOnly
+    ? undefined
+    : providerYdisksAccounts.find((account) => account.id === ydisksAccountId) ?? providerYdisksAccounts[0];
   const targetsForAccount = targets.map((target) => ({
     ...target,
     ydisksAccountId: selectedYdisksAccount?.id ?? '',
     ydisksAccountName: selectedYdisksAccount?.name ?? '',
   }));
-  const selectedTargets = targetsForAccount.filter((target) => target.enabled);
+  const selectedTargets = transferOnly ? [] : targetsForAccount.filter((target) => target.enabled);
   const channelCount = selectedTargets.length;
   const validCount = resources.length;
   const requiredShortLinks = validCount * channelCount;
@@ -141,7 +150,7 @@ export function TasksPage({
   // 否则批次会带空 ydisksAccountId，转存完成后原始链接不会登记到后台。
   const backendConnected = hasBackendApiKey ?? ydisksAccounts.length > 0;
   const hasBackend = backendConnected && providerYdisksAccounts.length > 0;
-  const backendAccountMissing = backendConnected && !selectedYdisksAccount;
+  const backendAccountMissing = backendConnected && !transferOnly && !selectedYdisksAccount;
   const canSubmit = validCount > 0
     && selectedTargetsReady
     && !backendAccountMissing
@@ -224,8 +233,8 @@ export function TasksPage({
         provider,
         providerAccountId,
         providerAccountName: selectedProviderAccount.displayName,
-        ydisksAccountId: selectedYdisksAccount?.id ?? '',
-        ydisksAccountName: selectedYdisksAccount?.name ?? '',
+        ydisksAccountId: transferOnly ? '' : selectedYdisksAccount?.id ?? '',
+        ydisksAccountName: transferOnly ? '' : selectedYdisksAccount?.name ?? '',
         targetFolderRef,
         shortLinkTargets: selectedTargets,
         resources,
@@ -274,12 +283,15 @@ export function TasksPage({
             value={providerAccountId}
           />
           <SelectField
-            disabled={!backendConnected || !hasBackend}
             label="Ydisks 后台账号"
-            onChange={setYdisksAccountId}
-            options={providerYdisksAccounts.length > 0
-              ? providerYdisksAccounts.map((account) => ({ value: account.id, label: account.name }))
-              : [{ value: '', label: backendConnected ? `暂无${providerLabels[provider]}后台账号` : '未连接后台（仅转存）' }]}
+            onChange={(value) => {
+              transferOnlySelectedRef.current = value === TRANSFER_ONLY_ACCOUNT_ID;
+              setYdisksAccountId(value);
+            }}
+            options={[
+              { value: TRANSFER_ONLY_ACCOUNT_ID, label: '仅转存（不登记后台）' },
+              ...providerYdisksAccounts.map((account) => ({ value: account.id, label: account.name })),
+            ]}
             value={ydisksAccountId}
           />
           <DirectorySelectField
@@ -290,7 +302,11 @@ export function TasksPage({
             onOpen={() => setFolderPickerOpen(true)}
           />
         </div>
-        {backendAccountMissing ? (
+        {transferOnly ? (
+          <Callout tone="info" title="仅转存模式">
+            本次仅把资源转存到你的网盘，不登记 Ydisks 原始链接，也不创建多渠道短链。
+          </Callout>
+        ) : backendAccountMissing ? (
           <Callout tone="warning" title="缺少当前平台后台账号">
             {`Ydisks 后台已连接，但没有可用于${providerLabels[provider]}的推广账号。本次任务无法登记原始链接，请先在后台创建对应账号或切换网盘平台。`}
           </Callout>
@@ -299,15 +315,17 @@ export function TasksPage({
             未连接 Ydisks 后台，本次将仅把资源转存到你的网盘，不创建短链。在右上角填写并检测 API Key 后，可一键为转存资源生成多渠道短链。
           </Callout>
         ) : null}
-        <ShortLinkTargets
-          disabled={!hasBackend}
-          domainOptions={availableDomainOptions}
-          targets={targetsForAccount}
-          onChangeDomain={(targetId, domain) => setTargets((current) => current.map((target) => (
-            target.id === targetId ? { ...target, domain } : target
-          )))}
-          onToggle={(targetId) => setTargets((current) => current.map((target) => target.id === targetId ? { ...target, enabled: !target.enabled } : target))}
-        />
+        {!transferOnly ? (
+          <ShortLinkTargets
+            disabled={!hasBackend}
+            domainOptions={availableDomainOptions}
+            targets={targetsForAccount}
+            onChangeDomain={(targetId, domain) => setTargets((current) => current.map((target) => (
+              target.id === targetId ? { ...target, domain } : target
+            )))}
+            onToggle={(targetId) => setTargets((current) => current.map((target) => target.id === targetId ? { ...target, enabled: !target.enabled } : target))}
+          />
+        ) : null}
         {folderPickerOpen ? (
           <FolderPickerModal
             account={selectedProviderAccount}

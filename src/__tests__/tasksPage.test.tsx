@@ -96,15 +96,33 @@ describe('TasksPage', () => {
     expect((screen.getByRole('button', { name: /创建任务并执行/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('未连接后台时进入仅转存模式：提示 + Ydisks 账号禁用 + 短链渠道禁用', () => {
+  it('未连接后台时默认选择仅转存，并隐藏短链配置', () => {
     render(<TasksPage {...baseProps({ ydisksAccounts: [], shortLinkTargets: [target({ enabled: true })] })} />);
     expect(screen.getByText('仅转存模式')).toBeTruthy();
-    // Ydisks 后台账号 select 禁用且显示未连接
+    // Ydisks 后台账号下拉保留“仅转存”选项，允许用户明确选择模式
     const ydisksSelect = screen.getByLabelText('Ydisks 后台账号') as HTMLSelectElement;
-    expect(ydisksSelect.disabled).toBe(true);
-    expect(ydisksSelect.value).toBe('');
-    // 短链渠道区域展示禁用提示而非渠道开关
-    expect(screen.getByText('未连接 Ydisks 后台，本次仅转存。在右上角填写并检测 API Key 后，可在此一键创建多渠道短链。')).toBeTruthy();
+    expect(ydisksSelect.disabled).toBe(false);
+    expect(ydisksSelect.value).toBe('__transfer_only__');
+    expect(Array.from(ydisksSelect.options).map((option) => option.textContent)).toContain('仅转存（不登记后台）');
+    expect(screen.queryByText('转存后批量创建短链')).toBeNull();
+  });
+
+  it('选择仅转存后隐藏短链配置并提交空后台账号', async () => {
+    bridge.parseImport.mockResolvedValue({
+      accepted: [{ title: '资源1', sourceUrl: QUARK_URL, provider: 'quark' as const }],
+      filtered: 0,
+    });
+    const onCreateBatch = vi.fn();
+    render(<TasksPage {...baseProps({ onCreateBatch })} />);
+    const ydisksSelect = screen.getByLabelText('Ydisks 后台账号') as HTMLSelectElement;
+    fireEvent.change(ydisksSelect, { target: { value: '__transfer_only__' } });
+    expect(screen.queryByText('转存后批量创建短链')).toBeNull();
+    fireEvent.change(screen.getByLabelText('网盘链接'), { target: { value: QUARK_URL } });
+    fireEvent.click(screen.getByRole('button', { name: /添加到清单/ }));
+    await waitFor(() => expect((screen.getByRole('button', { name: /创建任务并执行/ }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: /创建任务并执行/ }));
+    await waitFor(() => expect(onCreateBatch).toHaveBeenCalledTimes(1));
+    expect(onCreateBatch.mock.calls[0][0]).toMatchObject({ ydisksAccountId: '', ydisksAccountName: '', shortLinkTargets: [] });
   });
 
   it('逐条添加：parseImport 成功后资源进入清单', async () => {
@@ -323,14 +341,14 @@ describe('TasksPage', () => {
     expect(options).not.toContain('百度推广');
   });
 
-  it('后台已连接但当前平台没有推广账号时禁止静默提交', () => {
+  it('后台已连接但当前平台没有推广账号时提供仅转存选项', () => {
     render(<TasksPage {...baseProps({
       hasBackendApiKey: true,
       ydisksAccounts: [ydisksAccount({ id: 'yb', name: '百度推广', accountTypeName: '百度网盘' })],
     })} />);
-    expect(screen.getByText('缺少当前平台后台账号')).toBeTruthy();
     const ydisksSelect = screen.getByLabelText('Ydisks 后台账号') as HTMLSelectElement;
-    expect(ydisksSelect.disabled).toBe(true);
+    expect(ydisksSelect.value).toBe('__transfer_only__');
+    expect(Array.from(ydisksSelect.options)).toHaveLength(1);
   });
 
   it('切换到百度后，后台账号自动切到百度推广账号', () => {
