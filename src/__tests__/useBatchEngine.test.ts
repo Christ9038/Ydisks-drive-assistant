@@ -269,6 +269,21 @@ describe('useBatchEngine - 转存 effect', () => {
     await waitFor(() => expect(result.current.histories.length).toBeGreaterThanOrEqual(1));
   });
 
+  it('有后台账号但未选择短链：转存成功仍登记原始链接', async () => {
+    bridge.isTauriRuntime.mockReturnValue(true);
+    bridge.loadBatchesFromDb.mockResolvedValue([seededBatch({
+      ydisksAccountId: 'y1',
+      shortLinkTargetCount: 0,
+      shortLinkTargets: [],
+      items: [{ id: 'I-1', provider: 'quark', accountId: 'acc-1', sourceUrl: 'https://s', title: '资源', valid: true, status: 'sharing', step: '创建链接', progress: 45, accountName: '主账号' }],
+    })]);
+    const d = deps({ hasBackendApiKey: true });
+    const { result } = renderEngine(d);
+    await waitFor(() => expect(bridge.createBackendOriginalLink).toHaveBeenCalledWith(expect.objectContaining({ shareUrl: 'https://my/s' }), 'y1'));
+    expect(bridge.createBackendShortLink).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current.histories.length).toBeGreaterThanOrEqual(1));
+  });
+
   it('转存遇到鉴权错误 -> manual_required 并标记账号', async () => {
     bridge.isTauriRuntime.mockReturnValue(true);
     bridge.loadBatchesFromDb.mockResolvedValue([seededBatch()]);
@@ -294,6 +309,15 @@ describe('useBatchEngine - 转存 effect', () => {
     const { result } = renderEngine(d);
     await waitFor(() => expect(result.current.batches[0]?.items[0]?.status).toBe('waiting_retry'));
     expect(d.updateProviderAccount).not.toHaveBeenCalled();
+  });
+
+  it('已连接后台但批次未绑定账号 -> 完成时记录跳过登记原因', async () => {
+    bridge.isTauriRuntime.mockReturnValue(true);
+    bridge.loadBatchesFromDb.mockResolvedValue([seededBatch({ ydisksAccountId: '' })]);
+    const d = deps({ hasBackendApiKey: true });
+    const { result } = renderEngine(d);
+    await waitFor(() => expect(result.current.histories.length).toBeGreaterThanOrEqual(1));
+    expect((result.current.histories[0]?.logs ?? []).some((log) => log.message.includes('未绑定后台账号'))).toBe(true);
   });
 
   it('前端不执行配置限流，连续项统一委托 Rust 后台', async () => {

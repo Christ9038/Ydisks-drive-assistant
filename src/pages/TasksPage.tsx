@@ -26,6 +26,7 @@ export function TasksPage({
   quota,
   shortLinkTargets,
   ydisksAccounts,
+  hasBackendApiKey,
   onCreateBatch,
   onProviderCredentialError,
   onToggleDedupe,
@@ -36,6 +37,8 @@ export function TasksPage({
   quota: QuotaState;
   shortLinkTargets: ShortLinkTarget[];
   ydisksAccounts: YdisksAccountOption[];
+  /** Rust 后台是否已保存并确认 API Key。旧调用方未传时按已有后台资产兼容。 */
+  hasBackendApiKey?: boolean;
   onCreateBatch: (draft: BatchDraft) => void;
   onProviderCredentialError: (accountId: string, message: string) => void;
   onToggleDedupe: () => void;
@@ -132,11 +135,16 @@ export function TasksPage({
     : Math.min(validCount, Math.floor(remainingLinks / channelCount));
   const waiting = Math.max(validCount - executable, 0);
   const selectedTargetsReady = selectedTargets.every((target) => Boolean(target.domain));
-  // 是否已连接 Ydisks 后台（有后台账号即等价于 API Key 检测通过）。未连接时走「仅转存」模式：
-  // 后台账号选择与短链渠道禁用，转存成功即完成，不创建短链。
-  const hasBackend = ydisksAccounts.length > 0;
+  // 后台 API Key 与当前平台推广账号分别校验。未连接时走「仅转存」模式；
+  // 已连接但缺少当前平台账号时禁止提交，避免转存完成后静默跳过原始链接登记。
+  // API Key 已连接但当前平台没有匹配推广账号时，不能静默降级为仅转存，
+  // 否则批次会带空 ydisksAccountId，转存完成后原始链接不会登记到后台。
+  const backendConnected = hasBackendApiKey ?? ydisksAccounts.length > 0;
+  const hasBackend = backendConnected && providerYdisksAccounts.length > 0;
+  const backendAccountMissing = backendConnected && !selectedYdisksAccount;
   const canSubmit = validCount > 0
     && selectedTargetsReady
+    && !backendAccountMissing
     && Boolean(selectedProviderAccount && isProviderAccountUsable(selectedProviderAccount));
 
   const appendResources = (parsedResources: ParsedResource[], filteredFromParser = 0) => {
@@ -266,12 +274,12 @@ export function TasksPage({
             value={providerAccountId}
           />
           <SelectField
-            disabled={!hasBackend}
+            disabled={!backendConnected || !hasBackend}
             label="Ydisks 后台账号"
             onChange={setYdisksAccountId}
             options={providerYdisksAccounts.length > 0
               ? providerYdisksAccounts.map((account) => ({ value: account.id, label: account.name }))
-              : [{ value: '', label: hasBackend ? `暂无${providerLabels[provider]}后台账号` : '未连接后台（仅转存）' }]}
+              : [{ value: '', label: backendConnected ? `暂无${providerLabels[provider]}后台账号` : '未连接后台（仅转存）' }]}
             value={ydisksAccountId}
           />
           <DirectorySelectField
@@ -282,7 +290,11 @@ export function TasksPage({
             onOpen={() => setFolderPickerOpen(true)}
           />
         </div>
-        {!hasBackend ? (
+        {backendAccountMissing ? (
+          <Callout tone="warning" title="缺少当前平台后台账号">
+            {`Ydisks 后台已连接，但没有可用于${providerLabels[provider]}的推广账号。本次任务无法登记原始链接，请先在后台创建对应账号或切换网盘平台。`}
+          </Callout>
+        ) : !backendConnected ? (
           <Callout tone="info" title="仅转存模式">
             未连接 Ydisks 后台，本次将仅把资源转存到你的网盘，不创建短链。在右上角填写并检测 API Key 后，可一键为转存资源生成多渠道短链。
           </Callout>

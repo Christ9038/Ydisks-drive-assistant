@@ -263,6 +263,9 @@ export function useBatchEngine(deps: BatchEngineDeps): BatchEngine {
         .then((result) => {
           if (!activeBatchIdsRef.current.has(batch.id)) return;
           appendBatchLog(batch.id, createBatchLog('success', `转存完成：${result.shareUrl}`, item.title));
+          if (hasBackendApiKey && !batch.ydisksAccountId.trim()) {
+            appendBatchLog(batch.id, createBatchLog('warning', '已连接 Ydisks，但本批次未绑定后台账号，跳过原始链接登记', item.title));
+          }
           // 仅转存模式（无 API Key 或未绑定后台账号）：跳过后台登记，直接完成。
           // 有后台登记需求时才推进到 creating_original，由短链 effect 接管。
           const next = deriveTransferSuccessUpdate(batch, hasBackendApiKey ? 'configured' : '', result.shareUrl);

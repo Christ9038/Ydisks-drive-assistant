@@ -323,6 +323,16 @@ describe('TasksPage', () => {
     expect(options).not.toContain('百度推广');
   });
 
+  it('后台已连接但当前平台没有推广账号时禁止静默提交', () => {
+    render(<TasksPage {...baseProps({
+      hasBackendApiKey: true,
+      ydisksAccounts: [ydisksAccount({ id: 'yb', name: '百度推广', accountTypeName: '百度网盘' })],
+    })} />);
+    expect(screen.getByText('缺少当前平台后台账号')).toBeTruthy();
+    const ydisksSelect = screen.getByLabelText('Ydisks 后台账号') as HTMLSelectElement;
+    expect(ydisksSelect.disabled).toBe(true);
+  });
+
   it('切换到百度后，后台账号自动切到百度推广账号', () => {
     render(<TasksPage {...baseProps({
       accounts: [quarkAccount(), quarkAccount({ id: 'b1', provider: 'baidu', platformName: '百度网盘', displayName: '百度账号1', hasCredential: true })],

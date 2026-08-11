@@ -552,6 +552,7 @@ function App() {
             quota={quotaState}
             shortLinkTargets={shortlinkOptions}
             ydisksAccounts={ydisksAccounts}
+            hasBackendApiKey={hasApiKey}
             onCreateBatch={createBatch}
             onProviderCredentialError={(accountId, message) => updateProviderAccount(accountId, (current) => ({
               ...current,
