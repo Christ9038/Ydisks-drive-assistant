@@ -82,14 +82,24 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
     renderApp();
     expect(screen.getByText('Ydisks批量转存助手')).toBeTruthy();
     expect(screen.getByRole('heading', { name: '任务' })).toBeTruthy();
+    expect(screen.queryByText('新建批量转存')).toBeNull();
     expect(screen.getByPlaceholderText('API Key')).toBeTruthy();
     expect(screen.getByText('未连接')).toBeTruthy();
   });
 
   it('顶栏打开统计后台按钮调用浏览器桥接', async () => {
-    renderApp();
+    const { container } = renderApp();
     fireEvent.click(screen.getByRole('button', { name: '打开统计后台' }));
     await waitFor(() => expect(bridge.openConsole).toHaveBeenCalledTimes(1));
+    const topbarActions = container.querySelector('.topbar-actions');
+    expect(topbarActions).toBeTruthy();
+    const deleteButton = topbarActions?.querySelector('button[aria-label="清除 API Key"]');
+    const consoleButton = topbarActions?.querySelector('button.topbar-console-button');
+    expect(deleteButton).toBeTruthy();
+    expect(consoleButton).toBeTruthy();
+    expect(
+      deleteButton && consoleButton && (deleteButton.compareDocumentPosition(consoleButton) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBeTruthy();
   });
 
   it('清除 API Key 后连接状态立即变为未连接', async () => {
@@ -105,15 +115,14 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
 
   it('主导航在任务/状态/历史/设置间切换', () => {
     renderApp();
-    // 用顶栏 eyebrow（每页唯一）判定当前页
     fireEvent.click(screen.getByRole('button', { name: /^状态$/ }));
-    expect(screen.getByText('执行监控')).toBeTruthy();
+    expect(document.querySelector('.topbar h1')?.textContent).toBe('状态');
     fireEvent.click(screen.getByRole('button', { name: /^历史记录$/ }));
-    expect(screen.getByText('批次记录')).toBeTruthy();
+    expect(document.querySelector('.topbar h1')?.textContent).toBe('历史记录');
     fireEvent.click(screen.getByRole('button', { name: /^设置$/ }));
-    expect(screen.getByText('后台 / 网盘 / 本地')).toBeTruthy();
+    expect(document.querySelector('.topbar h1')?.textContent).toBe('设置');
     fireEvent.click(screen.getByRole('button', { name: /^任务$/ }));
-    expect(screen.getByText('新建批量转存')).toBeTruthy();
+    expect(document.querySelector('.topbar h1')?.textContent).toBe('任务');
   });
 
   it('设置页保存按平台间隔并把低于 3 秒的输入提升为 3 秒', async () => {

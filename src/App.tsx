@@ -80,11 +80,11 @@ import type {
 
 const primaryPages: PageKey[] = ['tasks', 'status', 'history'];
 
-const pageMeta: Record<PageKey, { label: string; eyebrow: string; icon: typeof KeyRound }> = {
-  tasks: { label: '任务', eyebrow: '新建批量转存', icon: FileInput },
-  status: { label: '状态', eyebrow: '执行监控', icon: ListChecks },
-  history: { label: '历史记录', eyebrow: '批次记录', icon: History },
-  settings: { label: '设置', eyebrow: '后台 / 网盘 / 本地', icon: Settings },
+const pageMeta: Record<PageKey, { label: string; icon: typeof KeyRound }> = {
+  tasks: { label: '任务', icon: FileInput },
+  status: { label: '状态', icon: ListChecks },
+  history: { label: '历史记录', icon: History },
+  settings: { label: '设置', icon: Settings },
 };
 
 const apiConnectionLabels: Record<ApiConnectionStatus, string> = {
@@ -675,7 +675,6 @@ function App() {
               <Menu size={20} />
             </button>
             <div>
-              <div className="eyebrow">{currentMeta.eyebrow}</div>
               <h1>{currentMeta.label}</h1>
             </div>
           </div>
@@ -697,9 +696,6 @@ function App() {
                 {apiConnectionStatus === 'checking' ? '检测中' : '检测'}
               </button>
             </div>
-            <button className="ghost-button compact topbar-console-button" type="button" onClick={openConsole}>
-              打开统计后台
-            </button>
             <button
               type="button"
               className="icon-button"
@@ -709,6 +705,9 @@ function App() {
               disabled={!apiKey && !hasApiKey}
             >
               <Trash2 size={19} strokeWidth={2.1} />
+            </button>
+            <button className="ghost-button compact topbar-console-button" type="button" onClick={openConsole}>
+              打开统计后台
             </button>
           </div>
         </header>
