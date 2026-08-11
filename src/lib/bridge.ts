@@ -541,6 +541,23 @@ export const openLogDir = async (): Promise<string> => {
   }
 };
 
+/** 打开 Ydisks 统计后台：桌面端交给系统默认浏览器，浏览器开发环境使用新标签页。 */
+export const openConsole = async (): Promise<void> => {
+  const url = 'https://console.ydisks.com';
+  if (!isTauriRuntime()) {
+    const opened = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!opened) {
+      throw new Error('无法打开统计后台，请检查浏览器弹窗设置');
+    }
+    return;
+  }
+  try {
+    await invoke('open_console_command');
+  } catch (error) {
+    throw new Error(formatBackendError(error));
+  }
+};
+
 // === 导出与工具 ===
 
 /**

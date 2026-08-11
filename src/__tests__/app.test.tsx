@@ -44,6 +44,7 @@ const bridge = vi.hoisted(() => ({
   })),
   loadBackendQuota: vi.fn(() => Promise.resolve({ maxLinks: 100, usedLinks: 0, remainingLinks: 100, shortlinkAccessStatus: 'ACTIVE' })),
   openLogDir: vi.fn(() => Promise.resolve('/logs')),
+  openConsole: vi.fn(() => Promise.resolve()),
   downloadHistoryCsv: vi.fn((_history: HistoryRecord) => Promise.resolve('/out/history.csv' as string | null)),
 }));
 vi.mock('../lib/bridge', () => bridge);
@@ -82,6 +83,23 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
     expect(screen.getByText('Ydisks批量转存助手')).toBeTruthy();
     expect(screen.getByRole('heading', { name: '任务' })).toBeTruthy();
     expect(screen.getByPlaceholderText('API Key')).toBeTruthy();
+    expect(screen.getByText('未连接')).toBeTruthy();
+  });
+
+  it('顶栏打开统计后台按钮调用浏览器桥接', async () => {
+    renderApp();
+    fireEvent.click(screen.getByRole('button', { name: '打开统计后台' }));
+    await waitFor(() => expect(bridge.openConsole).toHaveBeenCalledTimes(1));
+  });
+
+  it('清除 API Key 后连接状态立即变为未连接', async () => {
+    bridge.isTauriRuntime.mockReturnValue(true);
+    bridge.loadBusinessSettings.mockResolvedValue({ transferIntervals: { quark: 4, baidu: 4, xunlei: 4 }, hasApiKey: true });
+    renderApp();
+    await waitFor(() => expect(screen.getByText('已连接')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: '清除 API Key' }));
+    await waitFor(() => expect(screen.getByText('未连接')).toBeTruthy());
+    expect(bridge.clearBackendApiKey).toHaveBeenCalled();
   });
 
   it('主导航在任务/状态/历史/设置间切换', () => {

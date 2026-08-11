@@ -72,6 +72,7 @@ pub fn run() {
             load_history_command,
             save_text_file_command,
             open_log_dir_command,
+            open_console_command,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Ydisks批量转存助手失败");

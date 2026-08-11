@@ -582,7 +582,7 @@ button:disabled {
 
 .topbar-key {
   display: grid;
-  grid-template-columns: 18px minmax(150px, 220px) auto;
+  grid-template-columns: 18px minmax(150px, 220px) auto auto;
   align-items: center;
   gap: 8px;
   min-height: 38px;
@@ -615,6 +615,30 @@ button:disabled {
 .topbar-key button:disabled {
   cursor: wait;
   opacity: 0.72;
+}
+
+.topbar-key-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.topbar-key-status.is-connected {
+  color: var(--success);
+}
+
+.topbar-key-status.is-disconnected {
+  color: var(--muted);
+}
+
+.topbar-key-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .toast {
@@ -2748,7 +2772,7 @@ textarea,
   }
 
   .topbar-key {
-    grid-template-columns: 18px minmax(0, 1fr) auto;
+    grid-template-columns: 18px minmax(0, 1fr) auto auto;
     width: 100%;
   }
 

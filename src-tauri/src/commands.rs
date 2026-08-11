@@ -645,6 +645,13 @@ pub async fn open_log_dir_command(app: AppHandle) -> Result<String, BackendClien
     Ok(path_string)
 }
 
+/// 在系统默认浏览器中打开 Ydisks 统计后台。
+#[tauri::command]
+pub async fn open_console_command() -> Result<(), BackendClientError> {
+    open::that(crate::config::DEFAULT_CONSOLE_API_BASE)
+        .map_err(|e| backend_error("console", -1, format!("打开统计后台失败：{e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

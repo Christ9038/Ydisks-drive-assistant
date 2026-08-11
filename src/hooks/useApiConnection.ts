@@ -117,6 +117,10 @@ export function useApiConnection(setToast: (toast: ToastState | null) => void): 
     setHasApiKey(false);
     setApiConnectionStatus('failed');
     setApiError('');
+    setQuotaState(emptyQuota);
+    setYdisksAccounts([]);
+    setDomainOptions([]);
+    setShortlinkOptions([]);
   };
 
   /**

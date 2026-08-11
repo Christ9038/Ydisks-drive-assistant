@@ -41,6 +41,7 @@ import {
   loadBackendAssets,
   loadBackendQuota,
   openLogDir,
+  openConsole,
   downloadHistoryCsv,
 } from '../bridge';
 import { accountToRow, batchToRow, historyToRow } from '../mappers';
@@ -617,6 +618,22 @@ describe('openLogDir', () => {
     setRuntime(true);
     vi.mocked(invoke).mockRejectedValueOnce({ stage: 'log', message: 'x' });
     await expect(openLogDir()).rejects.toThrow('log: x');
+  });
+});
+
+describe('openConsole', () => {
+  it('桌面端调用系统浏览器命令', async () => {
+    setRuntime(true);
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    await expect(openConsole()).resolves.toBeUndefined();
+    expect(invoke).toHaveBeenCalledWith('open_console_command');
+  });
+
+  it('浏览器环境打开统计后台新标签页', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue({} as Window);
+    await expect(openConsole()).resolves.toBeUndefined();
+    expect(open).toHaveBeenCalledWith('https://console.ydisks.com', '_blank', 'noopener,noreferrer');
+    open.mockRestore();
   });
 });
 

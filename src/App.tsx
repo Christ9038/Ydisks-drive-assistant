@@ -48,6 +48,7 @@ import {
   saveProviderCredential,
   openLogDir as openLogDirBridge,
   downloadHistoryCsv,
+  openConsole as openConsoleBridge,
 } from './lib/bridge';
 import {
   ConfirmDialog,
@@ -354,6 +355,15 @@ function App() {
     }
   };
 
+  const openConsole = async () => {
+    try {
+      await openConsoleBridge();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : formatBackendError(error);
+      setToast({ message: `打开统计后台失败：${message}`, tone: 'danger' });
+    }
+  };
+
   const {
     cookieModalAccount,
     cookieDraft,
@@ -603,7 +613,7 @@ function App() {
           />
         );
     }
-  }, [activePage, apiError, apiKey, apiStatusLabel, apiStatusTitle, apiStatusTone, batches, connectedAccountCount, dedupeEnabled, domainOptions, histories, providerAccounts, quotaState, shortlinkOptions, themeMode, transferIntervals, ydisksAccounts]);
+  }, [activePage, apiError, apiKey, apiStatusLabel, apiStatusTitle, apiStatusTone, batches, connectedAccountCount, dedupeEnabled, domainOptions, hasApiKey, histories, providerAccounts, quotaState, shortlinkOptions, themeMode, transferIntervals, ydisksAccounts]);
 
 
   return (
@@ -675,14 +685,21 @@ function App() {
               <input
                 aria-label="API Key"
                 onChange={(event) => setApiKeyDraft(event.target.value)}
-                placeholder={hasApiKey ? '已安全保存到 Rust 后台' : 'API Key'}
+                placeholder="API Key"
                 type="password"
                 value={apiKey}
               />
+              <span className={`topbar-key-status ${hasApiKey ? 'is-connected' : 'is-disconnected'}`}>
+                <span className="topbar-key-status-dot" aria-hidden="true" />
+                {apiConnectionStatus === 'checking' ? '检测中' : hasApiKey ? '已连接' : '未连接'}
+              </span>
               <button type="button" onClick={handleDetectApiKey} disabled={apiConnectionStatus === 'checking'}>
                 {apiConnectionStatus === 'checking' ? '检测中' : '检测'}
               </button>
             </div>
+            <button className="ghost-button compact topbar-console-button" type="button" onClick={openConsole}>
+              打开统计后台
+            </button>
             <button
               type="button"
               className="icon-button"
