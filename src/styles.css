@@ -641,12 +641,6 @@ button:disabled {
   background: currentColor;
 }
 
-.topbar-console-button {
-  min-height: 42px;
-  padding: 0 14px;
-  border-radius: 12px;
-}
-
 .toast {
   position: fixed;
   top: 18px;
@@ -4017,6 +4011,24 @@ body {
 .primary-button.danger:hover {
   background: var(--color-danger-soft);
   background-image: none;
+}
+
+/* 顶栏统计后台入口与删除按钮统一尺寸，并使用主色操作按钮风格。 */
+.topbar-console-button {
+  height: 42px !important;
+  min-height: 42px !important;
+  padding: 0 14px !important;
+  color: var(--color-white) !important;
+  background: var(--color-primary) !important;
+  border-color: var(--color-primary) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 6px -1px var(--color-card-shadow), 0 2px 4px -2px var(--color-card-shadow);
+}
+
+.topbar-console-button:hover {
+  color: var(--color-white) !important;
+  background: var(--color-primary-strong) !important;
+  border-color: var(--color-primary-strong) !important;
 }
 
 .task-stage,
