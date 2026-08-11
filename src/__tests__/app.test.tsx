@@ -97,6 +97,7 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
     bridge.loadBusinessSettings.mockResolvedValue({ transferIntervals: { quark: 4, baidu: 4, xunlei: 4 }, hasApiKey: true });
     renderApp();
     await waitFor(() => expect(screen.getByText('已连接')).toBeTruthy());
+    expect(screen.getByPlaceholderText('••••••••••••')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '清除 API Key' }));
     await waitFor(() => expect(screen.getByText('未连接')).toBeTruthy());
     expect(bridge.clearBackendApiKey).toHaveBeenCalled();
@@ -256,7 +257,7 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
 
   it('API Key 输入并检测成功后提示后台已连接', async () => {
     renderApp();
-    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'key-123' } });
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'key-123' } });
     fireEvent.click(screen.getByRole('button', { name: '检测' }));
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('后台已连接'));
   });
@@ -264,36 +265,36 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
   it('API Key 检测失败显示错误 Toast', async () => {
     bridge.configureBackendApiKey.mockRejectedValueOnce(new Error('无效的 API Key'));
     renderApp();
-    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'bad' } });
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'bad' } });
     fireEvent.click(screen.getByRole('button', { name: '检测' }));
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('无效的 API Key'));
   });
 
   it('清除 API Key（顶部按钮）直接清空', async () => {
     renderApp();
-    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'k' } });
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'k' } });
     fireEvent.click(screen.getByRole('button', { name: '清除 API Key' }));
-    await waitFor(() => expect((screen.getByPlaceholderText('API Key') as HTMLInputElement).value).toBe(''));
+    await waitFor(() => expect((screen.getByLabelText('API Key') as HTMLInputElement).value).toBe(''));
   });
 
   it('设置页「清除密钥」弹出确认弹窗，确认后清空', async () => {
     renderApp();
-    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'k' } });
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'k' } });
     fireEvent.click(screen.getByRole('button', { name: /^设置$/ }));
     fireEvent.click(screen.getByRole('button', { name: '清除密钥' }));
     const dialog = await screen.findByRole('dialog');
     fireEvent.click(within(dialog).getByRole('button', { name: '清除密钥' }));
-    await waitFor(() => expect((screen.getByPlaceholderText('API Key') as HTMLInputElement).value).toBe(''));
+    await waitFor(() => expect((screen.getByLabelText('API Key') as HTMLInputElement).value).toBe(''));
   });
 
   it('确认弹窗取消后不执行', async () => {
     renderApp();
-    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'k' } });
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'k' } });
     fireEvent.click(screen.getByRole('button', { name: /^设置$/ }));
     fireEvent.click(screen.getByRole('button', { name: '清除密钥' }));
     fireEvent.click(screen.getByRole('button', { name: '取消' }));
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect((screen.getByPlaceholderText('API Key') as HTMLInputElement).value).toBe('k');
+    expect((screen.getByLabelText('API Key') as HTMLInputElement).value).toBe('k');
   });
 
   it('打开日志目录：浏览器模式提示在桌面端运行', async () => {
@@ -306,7 +307,7 @@ describe('App - 浏览器模式（isTauriRuntime=false）', () => {
   it('Toast 在操作触发时渲染', async () => {
     bridge.configureBackendApiKey.mockRejectedValueOnce(new Error('boom'));
     renderApp();
-    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'x' } });
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'x' } });
     fireEvent.click(screen.getByRole('button', { name: '检测' }));
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('boom'));
   });

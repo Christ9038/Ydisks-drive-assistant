@@ -685,7 +685,7 @@ function App() {
               <input
                 aria-label="API Key"
                 onChange={(event) => setApiKeyDraft(event.target.value)}
-                placeholder="API Key"
+                placeholder={hasApiKey ? '••••••••••••' : 'API Key'}
                 type="password"
                 value={apiKey}
               />

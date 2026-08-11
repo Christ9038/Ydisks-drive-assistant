@@ -641,6 +641,12 @@ button:disabled {
   background: currentColor;
 }
 
+.topbar-console-button {
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 12px;
+}
+
 .toast {
   position: fixed;
   top: 18px;
