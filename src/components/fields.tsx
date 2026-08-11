@@ -11,15 +11,21 @@ export function ShortLinkTargets({
   onChangeDomain,
   targets,
   onToggle,
+  onToggleAll,
   disabled = false,
 }: {
   domainOptions: DomainOption[];
   targets: ShortLinkTarget[];
   onChangeDomain: (targetId: string, domain: string) => void;
   onToggle: (targetId: string) => void;
+  /** 批量切换渠道选择状态。 */
+  onToggleAll?: (enabled: boolean) => void;
   /** 未连接后台时整体禁用，并提示连接后可用。 */
   disabled?: boolean;
 }) {
+  const allSelected = targets.length > 0 && targets.every((target) => target.enabled);
+  const anySelected = targets.some((target) => target.enabled);
+
   return (
     <div className={`shortlink-targets${disabled ? ' is-disabled' : ''}`}>
       <div className="shortlink-targets-head">
@@ -27,6 +33,12 @@ export function ShortLinkTargets({
           <span className="eyebrow">多渠道短链</span>
           <h3>转存后批量创建短链</h3>
         </div>
+        {!disabled && targets.length > 0 && onToggleAll ? (
+          <div className="shortlink-target-actions" aria-label="批量选择短链渠道">
+            <button className="ghost-button compact" type="button" disabled={allSelected} onClick={() => onToggleAll(true)}>全选</button>
+            <button className="ghost-button compact" type="button" disabled={!anySelected} onClick={() => onToggleAll(false)}>取消全选</button>
+          </div>
+        ) : null}
       </div>
       {disabled ? (
         <div className="provider-empty">未连接 Ydisks 后台，本次仅转存。在右上角填写并检测 API Key 后，可在此一键创建多渠道短链。</div>

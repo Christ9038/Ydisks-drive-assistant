@@ -324,6 +324,7 @@ export function TasksPage({
               target.id === targetId ? { ...target, domain } : target
             )))}
             onToggle={(targetId) => setTargets((current) => current.map((target) => target.id === targetId ? { ...target, enabled: !target.enabled } : target))}
+            onToggleAll={(enabled) => setTargets((current) => current.map((target) => ({ ...target, enabled })))}
           />
         ) : null}
         {folderPickerOpen ? (

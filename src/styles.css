@@ -1306,6 +1306,13 @@ textarea {
   margin: 3px 0 0;
 }
 
+.shortlink-target-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .shortlink-target-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { ShortLinkTargets } from '../components/fields';
 import type { ShortLinkTarget } from '../types';
 import type { DomainOption } from '../lib/types';
@@ -74,6 +74,49 @@ describe('ShortLinkTargets', () => {
     );
     (screen.getByRole('checkbox') as HTMLInputElement).click();
     expect(onToggle).toHaveBeenCalledWith('T-1');
+  });
+
+  it('全选与取消全选触发批量切换', () => {
+    const onToggleAll = vi.fn();
+    render(
+      <ShortLinkTargets
+        domainOptions={[domain()]}
+        targets={[target({ enabled: false }), target({ id: 'T-2', channelId: 'C-2', channelName: '抖音', enabled: true })]}
+        onChangeDomain={() => {}}
+        onToggle={() => {}}
+        onToggleAll={onToggleAll}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '全选' }));
+    fireEvent.click(screen.getByRole('button', { name: '取消全选' }));
+    expect(onToggleAll).toHaveBeenNthCalledWith(1, true);
+    expect(onToggleAll).toHaveBeenNthCalledWith(2, false);
+  });
+
+  it('全部渠道已选中时禁用全选，全部未选中时禁用取消全选', () => {
+    const { rerender } = render(
+      <ShortLinkTargets
+        domainOptions={[domain()]}
+        targets={[target({ enabled: true })]}
+        onChangeDomain={() => {}}
+        onToggle={() => {}}
+        onToggleAll={() => {}}
+      />,
+    );
+    expect((screen.getByRole('button', { name: '全选' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: '取消全选' }) as HTMLButtonElement).disabled).toBe(false);
+
+    rerender(
+      <ShortLinkTargets
+        domainOptions={[domain()]}
+        targets={[target({ enabled: false })]}
+        onChangeDomain={() => {}}
+        onToggle={() => {}}
+        onToggleAll={() => {}}
+      />,
+    );
+    expect((screen.getByRole('button', { name: '全选' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: '取消全选' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('无可用域名时渠道域名下拉显示占位', () => {
