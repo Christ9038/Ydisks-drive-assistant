@@ -199,7 +199,7 @@ jobs:
           mkdir -p direct-artifacts
           DMG=(src-tauri/target/${{ matrix.rustTarget }}/release/bundle/dmg/*.dmg)
           test "${#DMG[@]}" -eq 1
-          cp "${DMG[0]}" "direct-artifacts/ydisks-transfer-assistant-${{ matrix.name }}.dmg"
+          cp "${DMG[0]}" "direct-artifacts/Ydisks批量转存助手_${{ matrix.name }}.dmg"
 
       - name: Upload macOS installer
         if: matrix.rustTarget != ''

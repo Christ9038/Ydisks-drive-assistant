@@ -47,7 +47,7 @@ git push Ydisks-drive-assistant main
 
 完成后 **Releases** 页可见新版本，带安装包附件，Release notes 由 `--generate-notes` 自动生成（按 commit 标题）。
 
-Actions 的构建产物也会逐个上传为原始文件，不再打成 ZIP：macOS 是两个架构各一个 `.dmg`，Windows 是一个 `.msi` 和一个 `.exe`。GitHub 的直接 artifact 上传一次只能处理一个文件，因此 workflow 使用多个上传步骤；下载 Release 时仍建议使用 Release 页面上的安装包附件。
+Actions 的构建产物也会逐个上传为原始文件，不再打成 ZIP：macOS 是两个架构各一个中文命名的 `.dmg`（如 `Ydisks批量转存助手_macos-aarch64.dmg`），Windows 是一个 `.msi` 和一个 `.exe`。GitHub 的直接 artifact 上传一次只能处理一个文件，因此 workflow 使用多个上传步骤；下载 Release 时仍建议使用 Release 页面上的安装包附件。
 
 ### 配置 Windows 自签名证书
 
