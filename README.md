@@ -230,7 +230,7 @@ npm run tauri:build                       # 当前平台默认安装包
 
 仓库内置 `.github/workflows/build.yml`，两种模式：
 
-- **push 到 `main`** - 构建三平台并上传 artifact（CI 验证 + 取最新版），**不**发 Release。
+- **push 到 `main`** - 构建三平台并逐个上传原始安装包 artifact（CI 验证 + 取最新版），**不**发 Release。
 - **手动 `workflow_dispatch`** - 注入版本号构建，完成后自动打 tag + 发 GitHub Release，安装包（`.dmg` / `.msi` / `.exe`）作为 Release 资产上传。在仓库 **Actions -> build -> Run workflow** 手动触发。
 
 **矩阵** - macOS Apple Silicon（`aarch64`）、macOS Intel（`x86_64`）、Windows（`x86_64`）三份并行。

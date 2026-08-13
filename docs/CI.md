@@ -8,7 +8,7 @@
 
 | 触发方式 | 行为 | 产物 |
 |---------|------|------|
-| push 到 `main` | 只构建三平台，不上传 Release | Action run 内的 artifact（90 天过期，可下载验证） |
+| push 到 `main` | 只构建三平台，不上传 Release | Action run 内的直接安装包 artifact（90 天过期，可下载验证） |
 | 手动 `workflow_dispatch` | 注入版本号构建 + 打 tag + 发 GitHub Release | 永久 Release 资产（`.dmg` / `.msi` / `.exe`） |
 
 矩阵：macOS Apple Silicon（`aarch64-apple-darwin`）、macOS Intel（`x86_64-apple-darwin`）、Windows（`x86_64`），三份并行。Windows 安装包使用仓库维护者生成的自签名代码签名证书；macOS 使用不依赖证书的 ad-hoc 签名。
@@ -46,6 +46,8 @@ git push Ydisks-drive-assistant main
 3. `release` job（跑在 ubuntu，等三平台都成功）：下载全部 artifact -> 推导版本 -> 打 tag `v{版本}` -> `gh release create` 上传 `.dmg` / `.msi` / `.exe`。
 
 完成后 **Releases** 页可见新版本，带安装包附件，Release notes 由 `--generate-notes` 自动生成（按 commit 标题）。
+
+Actions 的构建产物也会逐个上传为原始文件，不再打成 ZIP：macOS 是两个架构各一个 `.dmg`，Windows 是一个 `.msi` 和一个 `.exe`。GitHub 的直接 artifact 上传一次只能处理一个文件，因此 workflow 使用多个上传步骤；下载 Release 时仍建议使用 Release 页面上的安装包附件。
 
 ### 配置 Windows 自签名证书
 

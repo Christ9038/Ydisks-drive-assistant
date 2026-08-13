@@ -193,15 +193,38 @@ jobs:
         if: matrix.rustTarget != ''
         run: bash scripts/inject_dmg_extra.sh src-tauri/target/${{ matrix.rustTarget }}/release/bundle/dmg scripts/macos-unblock.command
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+      - name: Prepare macOS installer artifact
+        if: matrix.rustTarget != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p direct-artifacts
+          DMG=(src-tauri/target/${{ matrix.rustTarget }}/release/bundle/dmg/*.dmg)
+          test "${#DMG[@]}" -eq 1
+          cp "${DMG[0]}" "direct-artifacts/ydisks-transfer-assistant-${{ matrix.name }}.dmg"
+
+      - name: Upload macOS installer
+        if: matrix.rustTarget != ''
+        uses: actions/upload-artifact@v7
         with:
-          name: ydisks-transfer-assistant-${{ matrix.name }}
-          path: |
-            src-tauri/target/*/release/bundle/macos/*.app
-            src-tauri/target/*/release/bundle/dmg/*.dmg
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/nsis/*.exe
+          path: direct-artifacts/*.dmg
+          archive: false
+          if-no-files-found: error
+
+      - name: Upload Windows MSI installer
+        if: matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v7
+        with:
+          path: src-tauri/target/release/bundle/msi/*.msi
+          archive: false
+          if-no-files-found: error
+
+      - name: Upload Windows NSIS installer
+        if: matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v7
+        with:
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          archive: false
           if-no-files-found: error
 
       - name: Remove Windows signing material
@@ -235,6 +258,7 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           path: artifacts
+          merge-multiple: true
 
       - name: Create tag & release
         env:
