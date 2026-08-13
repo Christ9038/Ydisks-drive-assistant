@@ -11,7 +11,7 @@
 | push 到 `main` | 只构建三平台，不上传 Release | Action run 内的 artifact（90 天过期，可下载验证） |
 | 手动 `workflow_dispatch` | 注入版本号构建 + 打 tag + 发 GitHub Release | 永久 Release 资产（`.dmg` / `.msi` / `.exe`） |
 
-矩阵：macOS Apple Silicon（`aarch64-apple-darwin`）、macOS Intel（`x86_64-apple-darwin`）、Windows（`x86_64`），三份并行。
+矩阵：macOS Apple Silicon（`aarch64-apple-darwin`）、macOS Intel（`x86_64-apple-darwin`）、Windows（`x86_64`），三份并行。Windows 安装包使用仓库维护者生成的自签名代码签名证书；macOS 使用不依赖证书的 ad-hoc 签名。
 
 并发控制：按 `事件类型 + 分支` 分组取消旧 run，push 不会误取消正在跑的发版。
 
@@ -46,6 +46,39 @@ git push Ydisks-drive-assistant main
 3. `release` job（跑在 ubuntu，等三平台都成功）：下载全部 artifact -> 推导版本 -> 打 tag `v{版本}` -> `gh release create` 上传 `.dmg` / `.msi` / `.exe`。
 
 完成后 **Releases** 页可见新版本，带安装包附件，Release notes 由 `--generate-notes` 自动生成（按 commit 标题）。
+
+### 配置 Windows 自签名证书
+
+证书只在本地生成一次，之后将加密的 `.pfx` 内容放入 GitHub Secrets。不要把 `.key`、`.pfx` 或 Base64 文件提交到仓库。
+
+```bash
+./scripts/generate_windows_signing_cert.sh
+```
+
+脚本默认把文件写入被 `.gitignore` 忽略的 `.local/windows-signing/`，并生成：
+
+- `windows-code-signing.pfx`：供本地备份使用，包含私钥。
+- `windows-code-signing.pfx.b64`：复制完整内容到 GitHub Secret `WINDOWS_CERTIFICATE`。
+- `windows-code-signing.key` / `windows-code-signing.crt`：本地证书材料。
+
+在仓库 **Settings -> Secrets and variables -> Actions** 中新增：
+
+| Secret | 内容 |
+|---|---|
+| `WINDOWS_CERTIFICATE` | `windows-code-signing.pfx.b64` 的完整内容 |
+| `WINDOWS_CERTIFICATE_PASSWORD` | 生成 PFX 时设置的密码 |
+
+可选地新增 Repository Variable `WINDOWS_TIMESTAMP_URL` 指定 RFC 3161 时间戳服务；未设置时使用 `http://timestamp.digicert.com`。时间戳只能保留签名时间，不能让自签名证书变成公共信任证书。
+
+Windows job 会把 PFX 导入 runner 的当前用户证书库，动态取得带 `Code Signing` EKU 的证书指纹，写入临时 Tauri 配置，并在上传 artifact 前检查每个 `.exe/.msi` 的签名者指纹。
+
+自签名证书只能证明这些安装包来自同一把私钥，默认不会被其他用户的 Windows 信任，因此 SmartScreen 仍可能提示未知发布者。它适合个人、内部分发和测试，不等同于购买的公开代码签名证书。
+
+### macOS ad-hoc 签名
+
+macOS job 使用 `APPLE_SIGNING_IDENTITY: "-"` 进行 ad-hoc 签名，不需要 Apple Developer 账号、OpenSSL 证书或 GitHub Secret。CI 会用 `codesign --verify` 检查 `.app` 的签名。
+
+ad-hoc 签名不是 `Developer ID Application`：不能通过 Apple 公证，也不会让 Gatekeeper 把发布者识别为可信开发者。公开分发仍可能需要用户在「系统设置 -> 隐私与安全性」中允许打开；如果要消除这类提示，仍需 Apple Developer Program、Developer ID 证书和公证。
 
 ### 重复发版安全
 

@@ -1,0 +1,262 @@
+name: build
+
+# 两种模式：
+#   1. push 到 main          —— 构建并上传 artifact（Windows 安装包会签名）。
+#   2. 手动 workflow_dispatch —— 注入版本号构建，并发布 GitHub Release。
+#
+# 版本号由 scripts/version.mjs 从 git 历史推导：最近的 vMAJOR.MINOR.PATCH 基线 tag
+# 之后的提交数即为 patch。新打 v1.1.0 / v2.0.0 tag 即开始新 minor/major 线，patch 归零重算。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            name: macos-aarch64
+            args: '--target aarch64-apple-darwin'
+            rustTarget: aarch64-apple-darwin
+          - platform: macos-latest
+            name: macos-x86_64
+            args: '--target x86_64-apple-darwin'
+            rustTarget: x86_64-apple-darwin
+          - platform: windows-latest
+            name: windows-x86_64
+            args: ''
+            rustTarget: ''
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && 0 || 1 }}
+          fetch-tags: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rustTarget }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Import Windows signing certificate
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE) -or
+              [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) {
+            throw 'WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD GitHub Secrets are required for the Windows build.'
+          }
+
+          New-Item -ItemType Directory -Force -Path signing | Out-Null
+          Set-Content -Path signing\certificate.txt -Value $env:WINDOWS_CERTIFICATE -NoNewline
+          certutil -f -decode signing\certificate.txt signing\certificate.pfx | Out-Host
+          Remove-Item signing\certificate.txt -Force
+
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          Import-PfxCertificate `
+            -FilePath signing\certificate.pfx `
+            -CertStoreLocation Cert:\CurrentUser\My `
+            -Password $password | Out-Null
+
+          $codeSigningOid = '1.3.6.1.5.5.7.3.3'
+          $certificate = Get-ChildItem Cert:\CurrentUser\My |
+            Where-Object {
+              $_.HasPrivateKey -and
+              ($_.EnhancedKeyUsageList | Where-Object { $_.ObjectId.Value -eq $codeSigningOid })
+            } |
+            Select-Object -First 1
+
+          if ($null -eq $certificate) {
+            throw 'No certificate with the Code Signing EKU was found after importing the PFX.'
+          }
+
+          $thumbprint = $certificate.Thumbprint.Replace(' ', '')
+          $timestampUrl = $env:WINDOWS_TIMESTAMP_URL
+          if ([string]::IsNullOrWhiteSpace($timestampUrl)) {
+            $timestampUrl = 'http://timestamp.digicert.com'
+          }
+
+          Write-Host "Using Windows signing certificate: $($certificate.Subject)"
+          Write-Host "Certificate thumbprint: $thumbprint"
+
+          $configPath = Join-Path $env:GITHUB_WORKSPACE 'src-tauri/tauri.conf.json'
+          $config = Get-Content -Raw -Path $configPath | ConvertFrom-Json
+          if ($null -eq $config.bundle.windows) {
+            $config.bundle | Add-Member -NotePropertyName windows -NotePropertyValue ([pscustomobject]@{})
+          }
+          $config.bundle.windows | Add-Member -Force -NotePropertyName certificateThumbprint -NotePropertyValue $thumbprint
+          $config.bundle.windows | Add-Member -Force -NotePropertyName digestAlgorithm -NotePropertyValue 'sha256'
+          $config.bundle.windows | Add-Member -Force -NotePropertyName timestampUrl -NotePropertyValue $timestampUrl
+          $config | ConvertTo-Json -Depth 100 | Set-Content -Path $configPath -Encoding utf8
+
+      - name: Compute & inject version (release only)
+        if: github.event_name == 'workflow_dispatch'
+        run: node scripts/version.mjs --write
+
+      - name: Build Tauri app (macOS ad-hoc signed)
+        if: matrix.rustTarget != ''
+        uses: tauri-apps/tauri-action@v1
+        env:
+          # No Apple Developer certificate is required. This is an ad-hoc
+          # signature, not a trusted Developer ID signature.
+          APPLE_SIGNING_IDENTITY: '-'
+        with:
+          args: ${{ matrix.args }}
+
+      - name: Build Tauri app (Windows signed)
+        if: matrix.platform == 'windows-latest'
+        uses: tauri-apps/tauri-action@v1
+        with:
+          args: ${{ matrix.args }}
+
+      - name: Verify Icon Composer asset (macOS only)
+        if: matrix.rustTarget != ''
+        shell: bash
+        run: |
+          APP="src-tauri/target/${{ matrix.rustTarget }}/release/bundle/macos/Ydisks批量转存助手.app"
+          test -s "$APP/Contents/Resources/Assets.car"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$APP/Contents/Info.plist")" = "AppIcon"
+          echo "Verified Icon Composer Assets.car and CFBundleIconName=AppIcon"
+
+      - name: Verify macOS ad-hoc signature
+        if: matrix.rustTarget != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/${{ matrix.rustTarget }}/release/bundle/macos/Ydisks批量转存助手.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign --display --verbose=4 "$APP" 2>&1 | tee /tmp/ydisks-codesign.txt
+          grep -q '^Signature=adhoc$' /tmp/ydisks-codesign.txt
+          echo "Verified ad-hoc signature for $APP"
+
+      - name: Verify Windows signatures
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $configPath = Join-Path $env:GITHUB_WORKSPACE 'src-tauri/tauri.conf.json'
+          $config = Get-Content -Raw -Path $configPath | ConvertFrom-Json
+          $expectedThumbprint = $config.bundle.windows.certificateThumbprint
+          $files = @(Get-ChildItem -Path 'src-tauri/target/release/bundle' -Recurse -File |
+            Where-Object { $_.Extension -in @('.exe', '.msi') })
+
+          if ($files.Count -eq 0) {
+            throw 'No Windows installer files were found to verify.'
+          }
+
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature -FilePath $file.FullName
+            if ($null -eq $signature.SignerCertificate) {
+              throw "No Authenticode signer was found for $($file.FullName)."
+            }
+            $actualThumbprint = $signature.SignerCertificate.Thumbprint.Replace(' ', '')
+            if ($actualThumbprint -ne $expectedThumbprint) {
+              throw "Unexpected signer for $($file.FullName): $actualThumbprint"
+            }
+            Write-Host "Verified signer $actualThumbprint for $($file.Name) (status: $($signature.Status))."
+          }
+
+      - name: Inject unblock script into DMG (macOS only)
+        if: matrix.rustTarget != ''
+        run: bash scripts/inject_dmg_extra.sh src-tauri/target/${{ matrix.rustTarget }}/release/bundle/dmg scripts/macos-unblock.command
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: ydisks-transfer-assistant-${{ matrix.name }}
+          path: |
+            src-tauri/target/*/release/bundle/macos/*.app
+            src-tauri/target/*/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      - name: Remove Windows signing material
+        if: always() && matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: Remove-Item -Path signing -Recurse -Force -ErrorAction SilentlyContinue
+
+  release:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+
+      - name: Compute version
+        id: version
+        run: node scripts/version.mjs
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: Create tag & release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -e
+          TAG="v${VERSION}"
+          REPO="${{ github.repository }}"
+          if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; nothing to release."
+            exit 0
+          fi
+          FILES=$(find artifacts -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \) | sort)
+          if [ -z "$FILES" ]; then
+            echo "No installer artifacts found; aborting release."
+            exit 1
+          fi
+          echo "Creating $TAG with:"
+          echo "$FILES"
+          gh release create "$TAG" $FILES \
+            -R "$REPO" \
+            --target "${{ github.sha }}" \
+            --title "$TAG" \
+            --generate-notes

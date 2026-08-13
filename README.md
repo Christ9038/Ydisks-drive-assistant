@@ -77,7 +77,7 @@ npm run tauri:dev      # 编译 Rust + 启动应用窗口（前端热更新）
 
 ### 1. 下载安装
 
-从 GitHub Releases 下载对应平台的安装包。本项目**未购买代码签名证书**（不向 Apple / Microsoft 付费），浏览器直下的包会被系统安全机制拦截，按下面任一方式即可正常安装，**无需自签名**：
+从 GitHub Releases 下载对应平台的安装包。本项目不购买 Apple / Microsoft 的公开代码签名证书。Windows 安装包使用 OpenSSL 生成的自签名证书，macOS 安装包使用 ad-hoc 签名；这些签名不能消除系统对未知发布者的提示。
 
 **macOS** - 下载 `.dmg`，把应用拖到「应用程序」。首次打开会被 Gatekeeper 拦截，任选一种解除（推荐第 1 种）：
 
@@ -235,7 +235,7 @@ npm run tauri:build                       # 当前平台默认安装包
 
 **矩阵** - macOS Apple Silicon（`aarch64`）、macOS Intel（`x86_64`）、Windows（`x86_64`）三份并行。
 
-> 当前为**未签名**构建。macOS 构建时通过 `hdiutil` 把双击修复脚本 `macos-unblock.command` 注入到 DMG 根目录（Tauri 无内置配置支持注入 DMG 额外文件，见 `scripts/inject_dmg_extra.sh`）；Windows 点「更多信息 -> 仍要运行」即可。如需彻底消除提示，需购买 Apple 开发者计划（macOS 公证，$99/年）或代码签名证书（Windows SmartScreen 信誉）并配置相应 secrets。
+> Windows job 会从 GitHub Secrets 导入自签名证书并签署 `.msi/.exe`，但由于证书不是公共信任证书，SmartScreen 仍可能需要点击「更多信息 -> 仍要运行」。macOS job 使用不依赖 Apple 证书的 ad-hoc 签名，不能替代 Developer ID 和公证；CI 还会通过 `hdiutil` 把双击修复脚本 `macos-unblock.command` 注入到 DMG 根目录（Tauri 无内置配置支持注入 DMG 额外文件，见 `scripts/inject_dmg_extra.sh`）。
 
 ### 版本管理
 
