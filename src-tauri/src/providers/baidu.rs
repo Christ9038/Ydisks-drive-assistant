@@ -335,6 +335,48 @@ async fn baidu_share_page_list(
     Ok(share_list)
 }
 
+/// 通过网页端 `share/list` 接口读取分享根目录文件列表（分享页已不再内嵌 `locals.mset`，此接口更稳定）。
+async fn baidu_share_api_list(
+    cookie: &str,
+    surl: &str,
+    verified_sekey: &str,
+) -> Result<BaiduShareList, BackendClientError> {
+    let url = url_with_params(
+        "https://pan.baidu.com/share/list",
+        &[
+            ("web", "1".to_string()),
+            ("app_id", "250528".to_string()),
+            ("channel", "chunlei".to_string()),
+            ("clienttype", "0".to_string()),
+            ("shorturl", surl.to_string()),
+            ("root", "1".to_string()),
+            ("page", "1".to_string()),
+            ("num", "100".to_string()),
+        ],
+    );
+    let data = run_http_json_request::<Value>(
+        "GET",
+        &url,
+        &baidu_headers(cookie, &format!("https://pan.baidu.com/s/1{surl}")),
+        None,
+        "baidu_share_list",
+        30,
+    )
+    .await?;
+    if data.get("errno").and_then(Value::as_i64).unwrap_or(-1) != 0 {
+        return Err(backend_error(
+            "baidu_share_list",
+            -4,
+            baidu_response_error_message(&data, "无法读取百度分享文件列表"),
+        ));
+    }
+    let mut share_list = baidu_share_list_from_data(&data, "baidu_share_list")?;
+    if share_list.sekey.is_empty() && !verified_sekey.trim().is_empty() {
+        share_list.sekey = verified_sekey.trim().to_string();
+    }
+    Ok(share_list)
+}
+
 /// 转存百度分享链接到指定目录，并生成新的百度分享链接。
 pub async fn transfer_baidu_share(
     cookie: &str,
@@ -443,14 +485,18 @@ pub async fn transfer_baidu_share(
             .ok_or_else(|| backend_error("baidu_wxlist", -4, "百度未返回分享数据"))?;
         baidu_share_list_from_data(share_data, "baidu_wxlist")?
     } else if wx_errno == 9019 || !pwd.is_empty() {
-        baidu_share_page_list(
-            &session_cookie,
-            source_url,
-            &surl_verify,
-            &pwd,
-            &verified_sekey,
-        )
-        .await?
+        match baidu_share_api_list(&session_cookie, &surl_verify, &verified_sekey).await {
+            Ok(list) => list,
+            Err(api_error) => baidu_share_page_list(
+                &session_cookie,
+                source_url,
+                &surl_verify,
+                &pwd,
+                &verified_sekey,
+            )
+            .await
+            .map_err(|_| api_error)?,
+        }
     } else {
         let wx_errno = wx_data.get("errno").and_then(Value::as_i64).unwrap_or(-1);
         let message = if wx_errno == 9019 {
