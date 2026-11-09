@@ -125,6 +125,14 @@ Module layout:
 
 On desktop, non-secret runtime parameters with defaults (currently per-provider transfer intervals) live in the Rust-managed `config.json`; a missing file is generated automatically, writes are atomic, and successful updates are reloaded into backend memory. Account credentials, API Key, batches and history remain in SQLite via `db/` repos. Rust returns only `hasCredential` / `hasApiKey` flags to the UI. Legacy database/localStorage settings are imported once and removed. Browser dev has no business-data persistence.
 
+### Hard rule: API-only, never HTML-based logic
+
+**永远不要把功能逻辑建立在解析 HTML 上。** 网盘功能（读分享列表、转存、建分享、登录态校验等）必须基于 JSON/表单 API。HTML 页面结构随时会变，一变软件就失效，造成维护地狱（百度分享页 `locals.mset` 改版导致转存失败即是先例，已改用 `share/list` 接口并删除页面抓取）。
+
+- 禁止：正则/字符串截取页面内嵌脚本（`locals.mset`、`yunData` 等）、抓页面拿数据、以页面 DOM 为前提的注入脚本驱动业务流程。
+- 允许：登录窗口仅用于让用户登录并采集 Cookie；业务数据一律走 API。
+- 遇到 API 不可用时，找另一个 API，不要回退到 HTML 抓取作为"兜底"。
+
 ### Error handling convention
 
 Backend errors are formatted via `formatBackendError()` (in `src/lib/format.ts`) which reads `{ message, stage, code, details }` from Rust. Errors with `stage: 'xunlei_review'` or code `1007` trigger a review flow (`extractXunleiReviewState`).

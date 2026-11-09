@@ -304,51 +304,6 @@ pub async fn run_http_request(
     parse_json_response_text(&text, stage, response_label)
 }
 
-/// 发送 HTTP 请求并返回原始正文文本。
-///
-/// 与 [`run_http_request`] 不同：响应不解析 JSON；非成功状态码一律返回错误，
-/// 有正文时把正文片段拼入错误消息。
-pub async fn run_http_text_request(
-    method: &str,
-    url: &str,
-    headers: &[String],
-    body: Option<Vec<u8>>,
-    stage: &str,
-    max_time: u32,
-) -> Result<String, BackendClientError> {
-    let mut request = http_client()
-        .request(parse_http_method(method, stage)?, url)
-        .headers(parse_http_headers(headers, stage)?)
-        .timeout(Duration::from_secs(max_time as u64));
-    if let Some(body) = body {
-        request = request.body(body);
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|error| backend_error(stage, -7, format!("HTTP 请求失败：{error}")))?;
-    let status = response.status();
-    let text = response
-        .text()
-        .await
-        .map_err(|error| backend_error(stage, -7, format!("读取 HTTP 响应失败：{error}")))?;
-
-    if !status.is_success() {
-        let message = if text.trim().is_empty() {
-            format!("HTTP 请求失败：{}", status.as_u16())
-        } else {
-            format!(
-                "HTTP 请求失败：{}；响应内容：{}",
-                status.as_u16(),
-                text.trim()
-            )
-        };
-        return Err(backend_error(stage, status.as_u16() as i32, message));
-    }
-
-    Ok(text)
-}
-
 /// 序列化 `body` 为 JSON 后委托 [`run_http_request`] 发送并返回 JSON 响应。
 pub async fn run_http_json_request<T: Serialize>(
     method: &str,

@@ -32,6 +32,8 @@ pub const XUNLEI_CLIENT_VERSION: &str = "8.31.0.9726";
 pub const XUNLEI_PACKAGE_NAME: &str = "com.xunlei.downloadprovider";
 pub const XUNLEI_WEB_USER_AGENT: &str = "ANDROID-com.xunlei.downloadprovider/8.31.0.9726 netWorkType/5G appid/40 deviceName/Xiaomi_M2004j7ac deviceModel/M2004J7AC OSVersion/12 protocolVersion/301 platformVersion/10 sdkVersion/512000 Oauth2Client/0.9 (Linux 4_14_186-perf-gddfs8vbb238b) (JAVA 0)";
 pub const XUNLEI_CORE_USER_AGENT: &str = "android-ok-http-client/xl-acc-sdk/version-5.0.12.512000";
+/// 夸克/百度登录窗口使用的桌面 Chrome UA（WKWebView 默认 UA 会让部分站点降级页面）。
+pub const LOGIN_DESKTOP_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 pub const XUNLEI_REVIEW_USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 12; M2004J7AC Build/SP1A.210812.016; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.0.0 Mobile Safari/537.36";
 pub const XUNLEI_API_BASE: &str = "https://api-pan.xunlei.com/drive/v1";
 pub const XUNLEI_APP_ID: &str = "40";

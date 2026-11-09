@@ -8,8 +8,7 @@ use crate::error::{backend_error, BackendClientError};
 use crate::http::client::{
     append_cookie, as_string, extract_query_param, form_encode_pairs, generated_passcode,
     json_scalar_to_string, percent_decode, run_http_form_request, run_http_json_request,
-    run_http_text_request, take_url_token_after, url_with_params, EmptyStringFallback,
-    EmptyVecFallback,
+    take_url_token_after, url_with_params, EmptyStringFallback, EmptyVecFallback,
 };
 use crate::types::{ProviderLoginResult, ProviderTransferResult};
 
@@ -22,18 +21,6 @@ pub fn extract_baidu_surl(url: &str) -> Option<String> {
 fn baidu_headers(cookie: &str, referer: &str) -> Vec<String> {
     vec![
         "Accept: application/json, text/plain, */*".to_string(),
-        "Accept-Encoding: identity".to_string(),
-        "Accept-Language: zh-CN,zh;q=0.9".to_string(),
-        "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36".to_string(),
-        format!("Referer: {referer}"),
-        format!("Cookie: {}", cookie.trim()),
-    ]
-}
-
-/// 构造百度分享页 HTML 请求头（Accept 为 HTML，含 Cookie / Referer）。
-fn baidu_page_headers(cookie: &str, referer: &str) -> Vec<String> {
-    vec![
-        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8".to_string(),
         "Accept-Encoding: identity".to_string(),
         "Accept-Language: zh-CN,zh;q=0.9".to_string(),
         "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36".to_string(),
@@ -251,91 +238,7 @@ fn baidu_share_list_from_data(
     })
 }
 
-/// 在 HTML 文本中定位 `prefix` 之后的第一个完整 JSON 对象（支持嵌套与字符串转义），用于解析百度分享页内嵌的 `locals.mset(...)` 数据。
-fn extract_json_argument<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
-    let start = text.find(prefix)? + prefix.len();
-    let rest = &text[start..];
-    let object_start = rest.find('{')?;
-    let json = &rest[object_start..];
-    let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
-    for (index, ch) in json.char_indices() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-        match ch {
-            '"' => in_string = true,
-            '{' | '[' => depth += 1,
-            '}' | ']' => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return Some(&json[..index + ch.len_utf8()]);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// 构造百度分享页 URL：已是完整链接直接用，否则用 surl + pwd 归一化拼装。
-fn baidu_share_page_url(source_url: &str, surl: &str, pwd: &str) -> String {
-    let trimmed = source_url.trim();
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        trimmed.to_string()
-    } else {
-        normalize_baidu_share_url(&format!("1{surl}"), pwd)
-    }
-}
-
-/// 请求百度分享页 HTML，从 `locals.mset(...)` 中解析文件列表；解析失败或无法访问时报 `baidu_share_page` 错误，sekey 为空时回填验证后的 sekey。
-async fn baidu_share_page_list(
-    cookie: &str,
-    source_url: &str,
-    surl: &str,
-    pwd: &str,
-    verified_sekey: &str,
-) -> Result<BaiduShareList, BackendClientError> {
-    let page_url = baidu_share_page_url(source_url, surl, pwd);
-    let html = run_http_text_request(
-        "GET",
-        &page_url,
-        &baidu_page_headers(cookie, "https://pan.baidu.com/"),
-        None,
-        "baidu_share_page",
-        30,
-    )
-    .await?;
-    let locals = extract_json_argument(&html, "locals.mset(").ok_or_else(|| {
-        backend_error(
-            "baidu_share_page",
-            -4,
-            "无法从百度分享页读取文件列表，请确认分享链接可访问",
-        )
-    })?;
-    let data = serde_json::from_str::<Value>(locals).map_err(|error| {
-        backend_error(
-            "baidu_share_page",
-            -2,
-            format!("解析百度分享页数据失败：{error}"),
-        )
-    })?;
-    let mut share_list = baidu_share_list_from_data(&data, "baidu_share_page")?;
-    if share_list.sekey.is_empty() && !verified_sekey.trim().is_empty() {
-        share_list.sekey = verified_sekey.trim().to_string();
-    }
-    Ok(share_list)
-}
-
-/// 通过网页端 `share/list` 接口读取分享根目录文件列表（分享页已不再内嵌 `locals.mset`，此接口更稳定）。
+/// 通过网页端 `share/list` 接口读取分享根目录文件列表。功能逻辑只建立在 JSON API 上，不解析 HTML。
 async fn baidu_share_api_list(
     cookie: &str,
     surl: &str,
@@ -485,18 +388,7 @@ pub async fn transfer_baidu_share(
             .ok_or_else(|| backend_error("baidu_wxlist", -4, "百度未返回分享数据"))?;
         baidu_share_list_from_data(share_data, "baidu_wxlist")?
     } else if wx_errno == 9019 || !pwd.is_empty() {
-        match baidu_share_api_list(&session_cookie, &surl_verify, &verified_sekey).await {
-            Ok(list) => list,
-            Err(api_error) => baidu_share_page_list(
-                &session_cookie,
-                source_url,
-                &surl_verify,
-                &pwd,
-                &verified_sekey,
-            )
-            .await
-            .map_err(|_| api_error)?,
-        }
+        baidu_share_api_list(&session_cookie, &surl_verify, &verified_sekey).await?
     } else {
         let wx_errno = wx_data.get("errno").and_then(Value::as_i64).unwrap_or(-1);
         let message = if wx_errno == 9019 {
@@ -762,44 +654,6 @@ mod tests {
     }
 
     #[test]
-    fn baidu_share_page_url_should_prefer_full_source_url() {
-        assert_eq!(
-            "https://pan.baidu.com/s/1abc?pwd=x",
-            baidu_share_page_url("https://pan.baidu.com/s/1abc?pwd=x", "1abc", "x")
-        );
-        // Without a full URL, surl is re-prefixed with "1" and normalized.
-        assert_eq!(
-            "https://pan.baidu.com/s/1abcDEF?pwd=9x8y",
-            baidu_share_page_url("", "abcDEF", "9x8y")
-        );
-    }
-
-    #[test]
-    fn extract_json_argument_should_isolate_first_json_object() {
-        assert_eq!(
-            Some("{\"a\":1,\"b\":2}"),
-            extract_json_argument("locals.mset({\"a\":1,\"b\":2})", "locals.mset(")
-        );
-        assert_eq!(
-            Some("{\"a\":{\"b\":2},\"c\":[1,2]}"),
-            extract_json_argument("locals.mset({\"a\":{\"b\":2},\"c\":[1,2]})", "locals.mset(")
-        );
-        // A closing brace inside a string literal must not terminate the object.
-        assert_eq!(
-            Some("{\"a\":\"}\"}"),
-            extract_json_argument("locals.mset({\"a\":\"}\"})", "locals.mset(")
-        );
-        assert_eq!(
-            None,
-            extract_json_argument("no prefix here", "locals.mset(")
-        );
-        assert_eq!(
-            None,
-            extract_json_argument("locals.mset() no braces", "locals.mset(")
-        );
-    }
-
-    #[test]
     fn value_array_from_should_coerce_array_or_nested_list() {
         assert_eq!(
             2,
@@ -846,7 +700,7 @@ mod tests {
             }],
             "randsk": "rand-1"
         });
-        let share_list = baidu_share_list_from_data(&data, "baidu_share_page")
+        let share_list = baidu_share_list_from_data(&data, "baidu_share_list")
             .expect("fallback fields should parse");
         assert_eq!(1, share_list.file_list.len());
         assert_eq!("sh-from-file", share_list.shareid);
@@ -866,10 +720,10 @@ mod tests {
 
         let no_shareid = baidu_share_list_from_data(
             &serde_json::json!({"list": [{"fs_id": 1}]}),
-            "baidu_share_page",
+            "baidu_share_list",
         );
         let err = no_shareid.expect_err("missing shareid/uk should error");
-        assert_eq!("baidu_share_page", err.stage);
+        assert_eq!("baidu_share_list", err.stage);
         assert_eq!(-4, err.code);
     }
 }

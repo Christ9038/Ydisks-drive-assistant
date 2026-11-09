@@ -9,8 +9,8 @@ use serde::Serialize;
 use tauri::{Emitter, Manager};
 
 use crate::config::{
-    PROVIDER_LOGIN_EVENT, XUNLEI_REVIEW_COMPLETE_EVENT, XUNLEI_REVIEW_DONE_PATH,
-    XUNLEI_REVIEW_INIT_SCRIPT, XUNLEI_REVIEW_USER_AGENT,
+    LOGIN_DESKTOP_USER_AGENT, PROVIDER_LOGIN_EVENT, XUNLEI_REVIEW_COMPLETE_EVENT,
+    XUNLEI_REVIEW_DONE_PATH, XUNLEI_REVIEW_INIT_SCRIPT, XUNLEI_REVIEW_USER_AGENT,
 };
 use crate::error::{backend_error, BackendClientError};
 use crate::providers::baidu::baidu_account_info;
@@ -234,7 +234,17 @@ pub(crate) async fn open_provider_login_window(
     let app_for_navigation = app.clone();
     let account_id_for_navigation = account_id.clone();
     let label_for_navigation = label.clone();
+    let app_for_new_window = app.clone();
+    let label_for_new_window = label.clone();
     tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::External(url))
+        .user_agent(LOGIN_DESKTOP_USER_AGENT)
+        // 登录按钮常通过 window.open / target=_blank 打开登录弹层：在当前窗口内跳转，避免被默认拦截而“点了没反应”。
+        .on_new_window(move |new_url, _features| {
+            if let Some(window) = app_for_new_window.get_webview_window(&label_for_new_window) {
+                let _ = window.navigate(new_url);
+            }
+            tauri::webview::NewWindowResponse::Deny
+        })
         .title(format!(
             "{}账号登录 - {account_id}",
             provider_name(provider)
